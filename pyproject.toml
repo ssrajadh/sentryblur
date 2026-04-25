@@ -15,7 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 plates = [
-    "ultralytics",
+    "open-image-models",
 ]
 prompt = [
     "torch",

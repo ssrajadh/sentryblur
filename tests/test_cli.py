@@ -119,3 +119,78 @@ def test_faces_preview_explicit_output(tmp_path: Path, monkeypatch):
     )
     assert result.exit_code == 0, result.output
     assert out.exists()
+
+
+class _StubPlateDetector:
+    """Stand-in for OpenImagePlateDetector — accepts the same kwargs and
+    returns a fixed Nx5 detection per frame."""
+    name = "stub-plate"
+
+    def __init__(self, **_kwargs):
+        pass
+
+    def detect(self, _frame_bgr: np.ndarray) -> np.ndarray:
+        return np.array([[5.0, 5.0, 25.0, 25.0, 0.85]], dtype=np.float32)
+
+
+def test_plates_help():
+    result = CliRunner().invoke(cli, ["plates", "--help"])
+    assert result.exit_code == 0
+    assert "INPUT_PATH" in result.output
+
+
+def test_plates_blur_smoke(tmp_path: Path, monkeypatch):
+    """End-to-end `plates` command with a stub detector. Verifies the
+    plates wiring through _run_blur_command + blur_video."""
+    pytest.importorskip("cv2")
+    monkeypatch.setattr(
+        "sentryblur.detectors.OpenImagePlateDetector", _StubPlateDetector
+    )
+
+    inp = tmp_path / "clip.mp4"
+    expected_out = tmp_path / "clip_blurred.mp4"
+    _make_test_video(inp, frames=10, size=(64, 64))
+
+    result = CliRunner().invoke(cli, ["plates", str(inp)])
+    assert result.exit_code == 0, result.output
+    assert expected_out.exists()
+    assert expected_out.stat().st_size > 0
+
+
+def test_plates_preview_smoke(tmp_path: Path, monkeypatch):
+    pytest.importorskip("cv2")
+    monkeypatch.setattr(
+        "sentryblur.detectors.OpenImagePlateDetector", _StubPlateDetector
+    )
+
+    inp = tmp_path / "clip.mp4"
+    expected_out = tmp_path / "clip_preview.jpg"
+    _make_test_video(inp, frames=10, size=(64, 64))
+
+    result = CliRunner().invoke(cli, ["plates", str(inp), "--preview"])
+    assert result.exit_code == 0, result.output
+    assert "Preview saved to" in result.output
+    assert expected_out.exists()
+
+
+def test_plates_missing_extra_clean_error(tmp_path: Path, monkeypatch):
+    """Missing [plates] extra should produce a friendly install hint, not
+    a stack trace."""
+    pytest.importorskip("cv2")
+    from sentryblur.detectors import MissingPlatesExtra
+
+    def _raises_missing(**_kwargs):
+        raise MissingPlatesExtra()
+
+    monkeypatch.setattr(
+        "sentryblur.detectors.OpenImagePlateDetector", _raises_missing
+    )
+
+    inp = tmp_path / "clip.mp4"
+    _make_test_video(inp, frames=5, size=(64, 64))
+
+    result = CliRunner().invoke(cli, ["plates", str(inp)])
+    assert result.exit_code != 0
+    assert "pip install 'sentryblur[plates]'" in result.output
+    # Verify no traceback dumped — friendly error only.
+    assert "Traceback" not in result.output

@@ -31,6 +31,10 @@ def _check_ffmpeg() -> None:
 
 
 def _handle_error(e: Exception) -> None:
+    from sentryblur.detectors import MissingPlatesExtra
+    if isinstance(e, MissingPlatesExtra):
+        click.secho(f"Error: {e}", fg="red", err=True)
+        raise SystemExit(1)
     if isinstance(e, FileNotFoundError):
         click.secho(f"Error: file not found: {e}", fg="red", err=True)
         raise SystemExit(1)
@@ -44,49 +48,38 @@ def _handle_error(e: Exception) -> None:
     raise e
 
 
-@click.group()
-@click.version_option()
-def cli():
-    """Blur faces and license plates in dashcam footage."""
-
-
-@cli.command()
-@click.argument("input_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
-@click.option("-o", "--output", "output_path", type=click.Path(dir_okay=False, path_type=Path),
-              default=None, help="Output path (default: <input>_blurred.<ext>).")
-@click.option("--dilation", default=15, show_default=True, type=int,
-              help="Pixels to dilate each detected box. Larger = safer margin.")
-@click.option("--window", default=3, show_default=True, type=int,
-              help="Temporal smoothing window (frames). Larger = catches dropouts.")
-@click.option("--blur-strength", default=51, show_default=True, type=int,
-              help="Gaussian blur kernel size. Must be odd; even values are bumped up.")
-@click.option("--conf", default=0.25, show_default=True, type=float,
-              help="Detector confidence threshold.")
-@click.option("--gpu", is_flag=True, help="Use GPU for detection (CUDA only).")
-@click.option("--preview", is_flag=True,
-              help="Generate a 3x3 contact sheet of detections instead of "
-                   "rendering the blurred video. Useful for sanity-checking "
-                   "detection quality before a long render.")
-@click.option("-v", "--verbose", is_flag=True,
-              help="Print progress (tqdm) and timing info to stderr.")
-def faces(input_path: Path, output_path: Path | None, dilation: int, window: int,
-          blur_strength: int, conf: float, gpu: bool, preview: bool, verbose: bool):
-    """Blur faces in INPUT_PATH using SCRFD."""
+def _run_blur_command(
+    *,
+    input_path: Path,
+    output_path: Path | None,
+    dilation: int,
+    window: int,
+    blur_strength: int,
+    preview: bool,
+    verbose: bool,
+    detector_factory,
+    target_label: str,
+) -> None:
+    """Shared body for `faces` and `plates` commands. Resolves the output
+    path, instantiates the detector, then dispatches to either
+    generate_preview() or blur_video()."""
     if not preview:
         _check_ffmpeg()
 
     if output_path is None:
-        output_path = _default_preview_output(input_path) if preview else _default_output(input_path)
+        output_path = (
+            _default_preview_output(input_path) if preview
+            else _default_output(input_path)
+        )
     if output_path.resolve() == input_path.resolve():
         click.secho("Error: output must differ from input.", fg="red", err=True)
         raise SystemExit(1)
 
     try:
-        from sentryblur.detectors import SCRFDFaceDetector
         from sentryblur.pipeline import blur_video, generate_preview
 
-        click.echo(f"Loading face detector...")
-        detector = SCRFDFaceDetector(conf=conf, use_gpu=gpu)
+        click.echo(f"Loading {target_label} detector...")
+        detector = detector_factory()
 
         if preview:
             click.echo(f"Rendering preview {input_path.name} -> {output_path.name}")
@@ -133,6 +126,79 @@ def faces(input_path: Path, output_path: Path | None, dilation: int, window: int
 
     except Exception as e:
         _handle_error(e)
+
+
+@click.group()
+@click.version_option()
+def cli():
+    """Blur faces and license plates in dashcam footage."""
+
+
+@cli.command()
+@click.argument("input_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("-o", "--output", "output_path", type=click.Path(dir_okay=False, path_type=Path),
+              default=None, help="Output path (default: <input>_blurred.<ext>).")
+@click.option("--dilation", default=15, show_default=True, type=int,
+              help="Pixels to dilate each detected box. Larger = safer margin.")
+@click.option("--window", default=3, show_default=True, type=int,
+              help="Temporal smoothing window (frames). Larger = catches dropouts.")
+@click.option("--blur-strength", default=51, show_default=True, type=int,
+              help="Gaussian blur kernel size. Must be odd; even values are bumped up.")
+@click.option("--conf", default=0.25, show_default=True, type=float,
+              help="Detector confidence threshold.")
+@click.option("--gpu", is_flag=True, help="Use GPU for detection (CUDA only).")
+@click.option("--preview", is_flag=True,
+              help="Generate a 3x3 contact sheet of detections instead of "
+                   "rendering the blurred video. Useful for sanity-checking "
+                   "detection quality before a long render.")
+@click.option("-v", "--verbose", is_flag=True,
+              help="Print progress (tqdm) and timing info to stderr.")
+def faces(input_path: Path, output_path: Path | None, dilation: int, window: int,
+          blur_strength: int, conf: float, gpu: bool, preview: bool, verbose: bool):
+    """Blur faces in INPUT_PATH using SCRFD."""
+    def factory():
+        from sentryblur.detectors import SCRFDFaceDetector
+        return SCRFDFaceDetector(conf=conf, use_gpu=gpu)
+
+    _run_blur_command(
+        input_path=input_path, output_path=output_path,
+        dilation=dilation, window=window, blur_strength=blur_strength,
+        preview=preview, verbose=verbose,
+        detector_factory=factory, target_label="face",
+    )
+
+
+@cli.command()
+@click.argument("input_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("-o", "--output", "output_path", type=click.Path(dir_okay=False, path_type=Path),
+              default=None, help="Output path (default: <input>_blurred.<ext>).")
+@click.option("--dilation", default=15, show_default=True, type=int,
+              help="Pixels to dilate each detected box. Larger = safer margin.")
+@click.option("--window", default=3, show_default=True, type=int,
+              help="Temporal smoothing window (frames). Larger = catches dropouts.")
+@click.option("--blur-strength", default=51, show_default=True, type=int,
+              help="Gaussian blur kernel size. Must be odd; even values are bumped up.")
+@click.option("--conf", default=0.25, show_default=True, type=float,
+              help="Detector confidence threshold.")
+@click.option("--gpu", is_flag=True, help="Use GPU for detection (CUDA only).")
+@click.option("--preview", is_flag=True,
+              help="Generate a 3x3 contact sheet of detections instead of "
+                   "rendering the blurred video.")
+@click.option("-v", "--verbose", is_flag=True,
+              help="Print progress (tqdm) and timing info to stderr.")
+def plates(input_path: Path, output_path: Path | None, dilation: int, window: int,
+           blur_strength: int, conf: float, gpu: bool, preview: bool, verbose: bool):
+    """Blur license plates in INPUT_PATH using open-image-models YOLOv9."""
+    def factory():
+        from sentryblur.detectors import OpenImagePlateDetector
+        return OpenImagePlateDetector(conf=conf, use_gpu=gpu)
+
+    _run_blur_command(
+        input_path=input_path, output_path=output_path,
+        dilation=dilation, window=window, blur_strength=blur_strength,
+        preview=preview, verbose=verbose,
+        detector_factory=factory, target_label="plate",
+    )
 
 
 if __name__ == "__main__":
