@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -112,6 +114,7 @@ def blur_video(
     temporal_window: int = 3,
     blur_strength: int = 51,
     progress: Callable[[int, int], None] | None = None,
+    verbose: bool = False,
 ) -> BlurResult:
     """Blur regions detected by `detector` in every frame of `input_path`,
     write to `output_path`. Atomic write via temp file."""
@@ -124,6 +127,7 @@ def blur_video(
     if not input_path.exists():
         raise FileNotFoundError(input_path)
 
+    t_start = time.perf_counter()
     fps = _video_fps(input_path)
 
     with tempfile.TemporaryDirectory(prefix="sentryblur_") as tmp:
@@ -140,8 +144,23 @@ def blur_video(
         first = cv2.imread(str(frames[0]))
         h, w = first.shape[:2]
 
+        if verbose:
+            print(
+                f"sentryblur: {input_path}  {w}x{h} @ {fps:.2f} fps, {n} frames",
+                file=sys.stderr,
+            )
+
+        if verbose:
+            from tqdm.auto import tqdm
+            frame_iter = tqdm(
+                enumerate(frames), total=n, desc="Detecting",
+                unit="frame", leave=False,
+            )
+        else:
+            frame_iter = enumerate(frames)
+
         masks: list[np.ndarray] = []
-        for i, fp in enumerate(frames):
+        for i, fp in frame_iter:
             frame = cv2.imread(str(fp))
             boxes = detector.detect(frame)
             mask = _boxes_to_mask(boxes, (h, w)) if len(boxes) else np.zeros((h, w), dtype=bool)
@@ -166,6 +185,13 @@ def blur_video(
         _assemble(frames_out, fps, tmp_out)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(tmp_out), str(output_path))
+
+    if verbose:
+        elapsed = time.perf_counter() - t_start
+        print(
+            f"sentryblur: done in {elapsed:.1f}s -> {output_path}",
+            file=sys.stderr,
+        )
 
     return BlurResult(
         n_frames=n,

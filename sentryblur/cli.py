@@ -59,8 +59,10 @@ def cli():
 @click.option("--conf", default=0.25, show_default=True, type=float,
               help="Detector confidence threshold.")
 @click.option("--gpu", is_flag=True, help="Use GPU for detection (CUDA only).")
+@click.option("-v", "--verbose", is_flag=True,
+              help="Print progress (tqdm) and timing info to stderr.")
 def faces(input_path: Path, output_path: Path | None, dilation: int, window: int,
-          blur_strength: int, conf: float, gpu: bool):
+          blur_strength: int, conf: float, gpu: bool, verbose: bool):
     """Blur faces in INPUT_PATH using SCRFD."""
     _check_ffmpeg()
 
@@ -79,18 +81,25 @@ def faces(input_path: Path, output_path: Path | None, dilation: int, window: int
 
         click.echo(f"Blurring {input_path.name} -> {output_path.name}")
         t0 = time.time()
-        with click.progressbar(length=100, label="Detecting") as bar:
-            last = [0]
-            def progress(done: int, total: int):
-                pct = int(100 * done / total)
-                if pct > last[0]:
-                    bar.update(pct - last[0])
-                    last[0] = pct
+        if verbose:
             result = blur_video(
                 input_path, output_path, detector,
                 dilation_px=dilation, temporal_window=window,
-                blur_strength=blur_strength, progress=progress,
+                blur_strength=blur_strength, verbose=True,
             )
+        else:
+            with click.progressbar(length=100, label="Detecting") as bar:
+                last = [0]
+                def progress(done: int, total: int):
+                    pct = int(100 * done / total)
+                    if pct > last[0]:
+                        bar.update(pct - last[0])
+                        last[0] = pct
+                result = blur_video(
+                    input_path, output_path, detector,
+                    dilation_px=dilation, temporal_window=window,
+                    blur_strength=blur_strength, progress=progress,
+                )
         elapsed = time.time() - t0
 
         video_s = result.n_frames / result.fps
