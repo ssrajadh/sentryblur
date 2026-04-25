@@ -1,0 +1,7 @@
+models/
+.venv/
+.frame_cache/
+__pycache__/
+test_files/
+test_clips/
+outputs/
