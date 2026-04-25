@@ -16,7 +16,7 @@ class _DummyDetector:
     """Detects nothing — verifies the pipeline runs end-to-end without ML deps."""
     name = "dummy"
 
-    def detect(self, frame_bgr: np.ndarray) -> np.ndarray:
+    def detect(self, _frame_bgr: np.ndarray) -> np.ndarray:
         return np.empty((0, 4), dtype=np.float32)
 
 
