@@ -5,9 +5,16 @@ Local, offline face and license plate redaction for video, with one command.
 ## Quickstart
 
 ```bash
-pip install sentryblur                    # base: faces only
-pip install 'sentryblur[plates]'          # add license plate detection
+# 1. Install uv (skip if you already have it)
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
+# 2. Clone and install
+git clone https://github.com/ssrajadh/sentryblur.git
+cd sentryblur
+uv tool install .                         # base: faces only
+uv tool install '.[plates]'               # add license plate detection
+
+# 3. Run
 sentryblur faces  dashcam.mp4             # → dashcam_blurred.mp4
 sentryblur plates dashcam.mp4             # → dashcam_blurred.mp4
 sentryblur faces  dashcam.mp4 --preview   # → dashcam_preview.jpg (3x3 contact sheet)
@@ -23,17 +30,29 @@ sentryblur faces  dashcam.mp4 --preview   # → dashcam_preview.jpg (3x3 contact
 
 ## Install
 
+From a local clone:
+
 ```bash
-pip install sentryblur                    # faces only (~50 MB of deps)
-pip install 'sentryblur[plates]'          # adds open-image-models for plates
+uv tool install .                         # faces only (~50 MB of deps)
+uv tool install '.[plates]'               # adds open-image-models for plates
 ```
 
+To upgrade after pulling new commits, re-run the same command.
+
 A future `[prompt]` extra will add natural-language prompted redaction (`sentryblur prompt "laptop screen" video.mp4`) using Grounding DINO + SAM 2. Not shipped yet — see [Roadmap](#roadmap).
+
+For development (editable install with test deps):
+
+```bash
+uv sync --group test
+uv run pytest
+```
 
 System prerequisites:
 
 - Python 3.11+
 - `ffmpeg` on PATH
+- [uv](https://docs.astral.sh/uv/) (the install snippet in [Quickstart](#quickstart) gets you this)
 
 First run of each detector downloads weights:
 
