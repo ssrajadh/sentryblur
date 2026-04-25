@@ -8,7 +8,9 @@ import numpy as np
 
 
 class Detector(Protocol):
-    """A detector takes a BGR frame and returns Nx4 xyxy boxes."""
+    """A detector takes a BGR frame and returns an (N, 4) or (N, 5) ndarray.
+    First four columns are xyxy boxes; an optional 5th column is per-box
+    confidence in [0, 1] (used only by the preview renderer)."""
 
     name: str
 
@@ -30,8 +32,8 @@ class SCRFDFaceDetector:
     def detect(self, frame_bgr: np.ndarray) -> np.ndarray:
         faces = self._app.get(frame_bgr)
         if not faces:
-            return np.empty((0, 4), dtype=np.float32)
-        boxes = [f.bbox for f in faces if f.det_score >= self._conf]
-        if not boxes:
-            return np.empty((0, 4), dtype=np.float32)
-        return np.asarray(boxes, dtype=np.float32)
+            return np.empty((0, 5), dtype=np.float32)
+        rows = [(*f.bbox, float(f.det_score)) for f in faces if f.det_score >= self._conf]
+        if not rows:
+            return np.empty((0, 5), dtype=np.float32)
+        return np.asarray(rows, dtype=np.float32)

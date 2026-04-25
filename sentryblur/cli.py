@@ -14,6 +14,10 @@ def _default_output(input_path: Path) -> Path:
     return input_path.with_name(f"{input_path.stem}_blurred{input_path.suffix}")
 
 
+def _default_preview_output(input_path: Path) -> Path:
+    return input_path.with_name(f"{input_path.stem}_preview.jpg")
+
+
 def _check_ffmpeg() -> None:
     if shutil.which("ffmpeg") is None:
         click.secho(
@@ -59,25 +63,40 @@ def cli():
 @click.option("--conf", default=0.25, show_default=True, type=float,
               help="Detector confidence threshold.")
 @click.option("--gpu", is_flag=True, help="Use GPU for detection (CUDA only).")
+@click.option("--preview", is_flag=True,
+              help="Generate a 3x3 contact sheet of detections instead of "
+                   "rendering the blurred video. Useful for sanity-checking "
+                   "detection quality before a long render.")
 @click.option("-v", "--verbose", is_flag=True,
               help="Print progress (tqdm) and timing info to stderr.")
 def faces(input_path: Path, output_path: Path | None, dilation: int, window: int,
-          blur_strength: int, conf: float, gpu: bool, verbose: bool):
+          blur_strength: int, conf: float, gpu: bool, preview: bool, verbose: bool):
     """Blur faces in INPUT_PATH using SCRFD."""
-    _check_ffmpeg()
+    if not preview:
+        _check_ffmpeg()
 
     if output_path is None:
-        output_path = _default_output(input_path)
+        output_path = _default_preview_output(input_path) if preview else _default_output(input_path)
     if output_path.resolve() == input_path.resolve():
         click.secho("Error: output must differ from input.", fg="red", err=True)
         raise SystemExit(1)
 
     try:
         from sentryblur.detectors import SCRFDFaceDetector
-        from sentryblur.pipeline import blur_video
+        from sentryblur.pipeline import blur_video, generate_preview
 
         click.echo(f"Loading face detector...")
         detector = SCRFDFaceDetector(conf=conf, use_gpu=gpu)
+
+        if preview:
+            click.echo(f"Rendering preview {input_path.name} -> {output_path.name}")
+            preview_path = generate_preview(input_path, output_path, detector)
+            click.secho(
+                f"Preview saved to {preview_path}. Review detections, then "
+                "re-run without --preview to render the full video.",
+                fg="green",
+            )
+            return
 
         click.echo(f"Blurring {input_path.name} -> {output_path.name}")
         t0 = time.time()

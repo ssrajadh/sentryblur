@@ -66,6 +66,8 @@ def _assemble(frame_dir: Path, fps: float, output: Path) -> None:
 
 
 def _boxes_to_mask(boxes: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    if boxes.ndim == 2 and boxes.shape[1] > 4:
+        boxes = boxes[:, :4]
     mask = np.zeros(shape, dtype=bool)
     for x0, y0, x1, y1 in boxes.astype(int):
         x0, y0 = max(0, x0), max(0, y0)
@@ -199,3 +201,92 @@ def blur_video(
         covered_frames=covered,
         output_path=output_path,
     )
+
+
+def generate_preview(
+    input_path: Path,
+    output_path: Path,
+    detector: Detector,
+    *,
+    max_width: int = 1920,
+) -> Path:
+    """Render a 3x3 contact sheet of detector output across 9 evenly-spaced
+    keyframes. Lets users verify detection quality before committing to a
+    full render. Atomic write via temp file."""
+
+    input_path = Path(input_path).resolve()
+    output_path = Path(output_path).resolve()
+    if not input_path.exists():
+        raise FileNotFoundError(input_path)
+
+    cap = cv2.VideoCapture(str(input_path))
+    try:
+        n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if n <= 0:
+            raise ValueError(f"Could not read frame count from {input_path}")
+
+        # 9 evenly-spaced indices: 0, N/8, 2N/8, ..., 7N/8, N-1.
+        # Dedupe and pad in case N is small.
+        raw = [0, n // 8, 2 * n // 8, 3 * n // 8, 4 * n // 8,
+               5 * n // 8, 6 * n // 8, 7 * n // 8, n - 1]
+        seen: list[int] = []
+        for i in raw:
+            if i not in seen:
+                seen.append(i)
+        while len(seen) < 9:
+            seen.append(seen[-1])
+        indices = seen[:9]
+
+        cells: list[np.ndarray] = []
+        for idx in indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                # Fall back to a black placeholder so the grid stays 3x3.
+                frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+
+            det = detector.detect(frame)
+            if det.size:
+                boxes = det[:, :4].astype(int)
+                scores = det[:, 4] if det.ndim == 2 and det.shape[1] >= 5 else None
+            else:
+                boxes = np.empty((0, 4), dtype=int)
+                scores = None
+
+            annotated = frame.copy()
+            for i, (x0, y0, x1, y1) in enumerate(boxes):
+                cv2.rectangle(annotated, (x0, y0), (x1, y1), (0, 255, 0), 2)
+                label = f"{scores[i]:.2f}" if scores is not None else "det"
+                # Top-left of box; nudge inside frame if box hugs the top edge.
+                ty = y0 - 5 if y0 > 15 else y0 + 15
+                cv2.putText(annotated, label, (x0, ty),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                            (0, 255, 0), 1, cv2.LINE_AA)
+
+            cells.append(annotated)
+    finally:
+        cap.release()
+
+    # Compose 3x3 grid, clamping to max_width.
+    cell_w = max_width // 3
+    h, w = cells[0].shape[:2]
+    cell_h = max(1, int(round(cell_w * h / w)))
+    resized = [cv2.resize(c, (cell_w, cell_h)) for c in cells]
+    rows = [cv2.hconcat(resized[i:i + 3]) for i in range(0, 9, 3)]
+    grid = cv2.vconcat(rows)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        suffix=output_path.suffix or ".jpg", delete=False,
+        dir=output_path.parent,
+    ) as tmp:
+        tmp_path = Path(tmp.name)
+    try:
+        cv2.imwrite(str(tmp_path), grid, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        shutil.move(str(tmp_path), str(output_path))
+    except Exception:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise
+
+    return output_path
