@@ -1,8 +1,10 @@
 models/
 .venv/
 .frame_cache/
+.frame_cache_test/
 __pycache__/
 test_files/
 test_clips/
 outputs/
 CLAUDE.MD
+DS_Store

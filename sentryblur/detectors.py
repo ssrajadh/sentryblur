@@ -62,7 +62,7 @@ class OpenImagePlateDetector:
 
     name = "open-image-yolov9-plate"
 
-    DEFAULT_MODEL = "yolo-v9-t-384-license-plates-end2end"
+    DEFAULT_MODEL = "yolo-v9-t-384-license-plate-end2end"
 
     def __init__(self, *, conf: float = 0.25, model_name: str | None = None,
                  use_gpu: bool = False, cache_dir: Path | None = None):
