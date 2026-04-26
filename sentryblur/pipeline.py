@@ -107,6 +107,18 @@ def _apply_blur(frame: np.ndarray, mask: np.ndarray, strength: int) -> np.ndarra
     return out
 
 
+def _apply_pixelate(frame: np.ndarray, mask: np.ndarray, block: int) -> np.ndarray:
+    if not mask.any():
+        return frame
+    h, w = frame.shape[:2]
+    sw, sh = max(1, w // block), max(1, h // block)
+    small = cv2.resize(frame, (sw, sh), interpolation=cv2.INTER_LINEAR)
+    pixelated = cv2.resize(small, (w, h), interpolation=cv2.INTER_NEAREST)
+    out = frame.copy()
+    out[mask] = pixelated[mask]
+    return out
+
+
 def blur_video(
     input_path: Path,
     output_path: Path,
@@ -115,12 +127,16 @@ def blur_video(
     dilation_px: int = 15,
     temporal_window: int = 3,
     blur_strength: int = 51,
+    blur_mode: str = "pixelate",
+    pixel_size: int = 16,
     progress: Callable[[int, int], None] | None = None,
     verbose: bool = False,
 ) -> BlurResult:
     """Blur regions detected by `detector` in every frame of `input_path`,
     write to `output_path`. Atomic write via temp file."""
 
+    if blur_mode not in ("pixelate", "gaussian"):
+        raise ValueError(f"unknown blur_mode: {blur_mode!r}")
     if blur_strength % 2 == 0:
         blur_strength += 1  # cv2 GaussianBlur requires odd
 
@@ -176,7 +192,10 @@ def blur_video(
         covered = 0
         for idx, (fp, m) in enumerate(zip(frames, masks)):
             frame = cv2.imread(str(fp))
-            blurred = _apply_blur(frame, m, blur_strength)
+            if blur_mode == "pixelate":
+                blurred = _apply_pixelate(frame, m, pixel_size)
+            else:
+                blurred = _apply_blur(frame, m, blur_strength)
             cv2.imwrite(str(frames_out / f"{idx:05d}.jpg"), blurred,
                         [cv2.IMWRITE_JPEG_QUALITY, 95])
             if m.any():

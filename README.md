@@ -93,7 +93,9 @@ Done. 720 frames, coverage 84.2%, 22.7s (0.8x realtime)
 | `-o, --output PATH` | `<input>_blurred.<ext>` | Output path. With `--preview`, defaults to `<input>_preview.jpg` |
 | `--dilation N` | 15 | Pixels to grow each detected box. Larger = safer margin around the target. |
 | `--window N` | 3 | Temporal smoothing window in frames. The mask for frame *i* is the union across `[i-N, i+N]`, so a single-frame detection miss gets filled by its neighbors. |
-| `--blur-strength N` | 51 | Gaussian kernel size. Must be odd; even values are bumped up. |
+| `--blur-mode MODE` | `pixelate` | Redaction style: `pixelate` (mosaic) or `gaussian`. Pixelate is the standard for redaction and harder to see through; gaussian can look weak on small targets. |
+| `--pixel-size N` | 16 | Mosaic block size in pixels (pixelate mode only). Smaller = stronger redaction. |
+| `--blur-strength N` | 51 | Gaussian kernel size (gaussian mode only). Must be odd; even values are bumped up. |
 | `--conf F` | 0.25 | Detector confidence threshold. Lower = more recall, more false positives. |
 | `--gpu` | off | Use CUDA for detection. Apple MPS not yet wired. |
 | `--preview` | off | Render a 3x3 keyframe contact sheet with bounding boxes instead of blurring the full video. |
@@ -120,7 +122,7 @@ Open the JPG, verify the boxes land where you expect, then re-run without `--pre
 
 **3. Temporal smooth.** For frame *i*, the final mask is the union of dilated masks across `[i-window, i+window]`. A single-frame detection miss — which is the most common failure mode and the most damaging one for redaction — gets filled in by its neighbors as long as either side detected. `--window 3` covers a 7-frame radius (~230 ms at 30 fps), wide enough for transient miss but narrow enough not to over-blur during fast motion.
 
-**4. Blur and reassemble.** A Gaussian blur (`--blur-strength`) is applied to the masked region of each frame, the unmasked region is kept untouched, and ffmpeg reassembles to H.264 at CRF 18. The output is written atomically — to a tempfile, then `mv`'d into place — so a crash mid-render never overwrites your intended output with a half-finished file.
+**4. Redact and reassemble.** The masked region of each frame is replaced — by default with a pixel mosaic (`--pixel-size`), or with a Gaussian blur (`--blur-strength`) if `--blur-mode gaussian`. Pixelation is the default because Gaussian blur on small targets (faces in dashcams are often 30–60 px) tends to collapse to a flat blob that looks weak; a mosaic preserves the visual signal "this region is redacted." The unmasked region is kept untouched, and ffmpeg reassembles to H.264 at CRF 18. The output is written atomically — to a tempfile, then `mv`'d into place — so a crash mid-render never overwrites your intended output with a half-finished file.
 
 ## Limitations
 

@@ -55,6 +55,8 @@ def _run_blur_command(
     dilation: int,
     window: int,
     blur_strength: int,
+    blur_mode: str,
+    pixel_size: int,
     preview: bool,
     verbose: bool,
     detector_factory,
@@ -97,7 +99,8 @@ def _run_blur_command(
             result = blur_video(
                 input_path, output_path, detector,
                 dilation_px=dilation, temporal_window=window,
-                blur_strength=blur_strength, verbose=True,
+                blur_strength=blur_strength, blur_mode=blur_mode,
+                pixel_size=pixel_size, verbose=True,
             )
         else:
             with click.progressbar(length=100, label="Detecting") as bar:
@@ -110,7 +113,8 @@ def _run_blur_command(
                 result = blur_video(
                     input_path, output_path, detector,
                     dilation_px=dilation, temporal_window=window,
-                    blur_strength=blur_strength, progress=progress,
+                    blur_strength=blur_strength, blur_mode=blur_mode,
+                    pixel_size=pixel_size, progress=progress,
                 )
         elapsed = time.time() - t0
 
@@ -142,8 +146,16 @@ def cli():
               help="Pixels to dilate each detected box. Larger = safer margin.")
 @click.option("--window", default=3, show_default=True, type=int,
               help="Temporal smoothing window (frames). Larger = catches dropouts.")
+@click.option("--blur-mode", default="pixelate", show_default=True,
+              type=click.Choice(["pixelate", "gaussian"]),
+              help="Redaction style. Pixelate is harder to see through; "
+                   "gaussian is softer but smaller targets may look weak.")
+@click.option("--pixel-size", default=16, show_default=True, type=int,
+              help="Mosaic block size in pixels (pixelate mode only). "
+                   "Smaller = stronger redaction.")
 @click.option("--blur-strength", default=51, show_default=True, type=int,
-              help="Gaussian blur kernel size. Must be odd; even values are bumped up.")
+              help="Gaussian kernel size (gaussian mode only). Must be odd; "
+                   "even values are bumped up.")
 @click.option("--conf", default=0.25, show_default=True, type=float,
               help="Detector confidence threshold.")
 @click.option("--gpu", is_flag=True, help="Use GPU for detection (CUDA only).")
@@ -154,7 +166,8 @@ def cli():
 @click.option("-v", "--verbose", is_flag=True,
               help="Print progress (tqdm) and timing info to stderr.")
 def faces(input_path: Path, output_path: Path | None, dilation: int, window: int,
-          blur_strength: int, conf: float, gpu: bool, preview: bool, verbose: bool):
+          blur_mode: str, pixel_size: int, blur_strength: int,
+          conf: float, gpu: bool, preview: bool, verbose: bool):
     """Blur faces in INPUT_PATH using SCRFD."""
     def factory():
         from sentryblur.detectors import SCRFDFaceDetector
@@ -163,6 +176,7 @@ def faces(input_path: Path, output_path: Path | None, dilation: int, window: int
     _run_blur_command(
         input_path=input_path, output_path=output_path,
         dilation=dilation, window=window, blur_strength=blur_strength,
+        blur_mode=blur_mode, pixel_size=pixel_size,
         preview=preview, verbose=verbose,
         detector_factory=factory, target_label="face",
     )
@@ -176,8 +190,16 @@ def faces(input_path: Path, output_path: Path | None, dilation: int, window: int
               help="Pixels to dilate each detected box. Larger = safer margin.")
 @click.option("--window", default=3, show_default=True, type=int,
               help="Temporal smoothing window (frames). Larger = catches dropouts.")
+@click.option("--blur-mode", default="pixelate", show_default=True,
+              type=click.Choice(["pixelate", "gaussian"]),
+              help="Redaction style. Pixelate is harder to see through; "
+                   "gaussian is softer but smaller targets may look weak.")
+@click.option("--pixel-size", default=16, show_default=True, type=int,
+              help="Mosaic block size in pixels (pixelate mode only). "
+                   "Smaller = stronger redaction.")
 @click.option("--blur-strength", default=51, show_default=True, type=int,
-              help="Gaussian blur kernel size. Must be odd; even values are bumped up.")
+              help="Gaussian kernel size (gaussian mode only). Must be odd; "
+                   "even values are bumped up.")
 @click.option("--conf", default=0.25, show_default=True, type=float,
               help="Detector confidence threshold.")
 @click.option("--gpu", is_flag=True, help="Use GPU for detection (CUDA only).")
@@ -187,7 +209,8 @@ def faces(input_path: Path, output_path: Path | None, dilation: int, window: int
 @click.option("-v", "--verbose", is_flag=True,
               help="Print progress (tqdm) and timing info to stderr.")
 def plates(input_path: Path, output_path: Path | None, dilation: int, window: int,
-           blur_strength: int, conf: float, gpu: bool, preview: bool, verbose: bool):
+           blur_mode: str, pixel_size: int, blur_strength: int,
+           conf: float, gpu: bool, preview: bool, verbose: bool):
     """Blur license plates in INPUT_PATH using open-image-models YOLOv9."""
     def factory():
         from sentryblur.detectors import OpenImagePlateDetector
@@ -196,6 +219,7 @@ def plates(input_path: Path, output_path: Path | None, dilation: int, window: in
     _run_blur_command(
         input_path=input_path, output_path=output_path,
         dilation=dilation, window=window, blur_strength=blur_strength,
+        blur_mode=blur_mode, pixel_size=pixel_size,
         preview=preview, verbose=verbose,
         detector_factory=factory, target_label="plate",
     )
