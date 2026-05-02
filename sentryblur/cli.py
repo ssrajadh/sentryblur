@@ -18,6 +18,89 @@ def _default_preview_output(input_path: Path) -> Path:
     return input_path.with_name(f"{input_path.stem}_preview.jpg")
 
 
+_LAST_CLIP_MAX_AGE_S = 7 * 24 * 3600
+_LAST_CLIP_WARN_AGE_S = 3600
+
+
+def _format_age(seconds: int) -> str:
+    seconds = max(0, seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    if seconds < 86400:
+        return f"{seconds // 3600}h"
+    return f"{seconds // 86400}d"
+
+
+def _resolve_input(
+    input_path: Path | None,
+    use_last: bool,
+    yes: bool,
+) -> Path:
+    """Resolve the command's input path, honoring --last.
+
+    Exits the process on resolution failure. Returns an absolute Path
+    on success.
+    """
+    if input_path is not None and use_last:
+        raise click.UsageError(
+            "INPUT_PATH and --last are mutually exclusive.",
+        )
+    if input_path is None and not use_last:
+        raise click.UsageError("Missing argument 'INPUT_PATH'.")
+
+    if not use_last:
+        return input_path
+
+    from sentryblur._toolkit_cache import read_last_clip
+
+    cached = read_last_clip()
+    if cached is None:
+        click.secho(
+            "Error: No cached clip found. "
+            "Run sentrysearch first to save a clip.",
+            fg="red", err=True,
+        )
+        raise SystemExit(1)
+
+    if not cached.file_exists:
+        click.secho(
+            f"Error: Cached clip path no longer exists: {cached.path}\n"
+            "The file may have been deleted or moved.",
+            fg="red", err=True,
+        )
+        raise SystemExit(1)
+
+    age = cached.age_seconds
+    if age > _LAST_CLIP_MAX_AGE_S:
+        when = cached.saved_at.strftime("%Y-%m-%d %H:%M UTC")
+        click.secho(
+            f"Error: Cached clip is more than 7 days old ({when}).\n"
+            "Run sentrysearch again to refresh.",
+            fg="red", err=True,
+        )
+        raise SystemExit(1)
+
+    age_str = _format_age(age)
+    if age > _LAST_CLIP_WARN_AGE_S:
+        click.secho(
+            f"Note: cached clip is from {age_str} ago at {cached.path}",
+            fg="yellow", err=True,
+        )
+
+    if not yes:
+        if not click.confirm(
+            f"Last clip: {cached.path} "
+            f"(saved {age_str} ago by {cached.saved_by})\n"
+            "Process this clip?",
+            default=True,
+        ):
+            raise SystemExit(1)
+
+    return cached.path
+
+
 def _check_ffmpeg() -> None:
     if shutil.which("ffmpeg") is None:
         click.secho(
@@ -139,9 +222,16 @@ def cli():
 
 
 @cli.command()
-@click.argument("input_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.argument("input_path", type=click.Path(exists=True, dir_okay=False, path_type=Path),
+                required=False, default=None)
 @click.option("-o", "--output", "output_path", type=click.Path(dir_okay=False, path_type=Path),
               default=None, help="Output path (default: <input>_blurred.<ext>).")
+@click.option("--last", "use_last", is_flag=True,
+              help="Use the most recent clip saved by sentrysearch (see "
+                   "`sentrysearch search --save-top`). Cannot be combined "
+                   "with INPUT_PATH.")
+@click.option("-y", "--yes", is_flag=True,
+              help="Skip the --last confirmation prompt.")
 @click.option("--dilation", default=15, show_default=True, type=int,
               help="Pixels to dilate each detected box. Larger = safer margin.")
 @click.option("--window", default=3, show_default=True, type=int,
@@ -165,10 +255,14 @@ def cli():
                    "detection quality before a long render.")
 @click.option("-v", "--verbose", is_flag=True,
               help="Print progress (tqdm) and timing info to stderr.")
-def faces(input_path: Path, output_path: Path | None, dilation: int, window: int,
+def faces(input_path: Path | None, output_path: Path | None,
+          use_last: bool, yes: bool,
+          dilation: int, window: int,
           blur_mode: str, pixel_size: int, blur_strength: int,
           conf: float, gpu: bool, preview: bool, verbose: bool):
     """Blur faces in INPUT_PATH using SCRFD."""
+    input_path = _resolve_input(input_path, use_last, yes)
+
     def factory():
         from sentryblur.detectors import SCRFDFaceDetector
         return SCRFDFaceDetector(conf=conf, use_gpu=gpu)
@@ -183,9 +277,16 @@ def faces(input_path: Path, output_path: Path | None, dilation: int, window: int
 
 
 @cli.command()
-@click.argument("input_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.argument("input_path", type=click.Path(exists=True, dir_okay=False, path_type=Path),
+                required=False, default=None)
 @click.option("-o", "--output", "output_path", type=click.Path(dir_okay=False, path_type=Path),
               default=None, help="Output path (default: <input>_blurred.<ext>).")
+@click.option("--last", "use_last", is_flag=True,
+              help="Use the most recent clip saved by sentrysearch (see "
+                   "`sentrysearch search --save-top`). Cannot be combined "
+                   "with INPUT_PATH.")
+@click.option("-y", "--yes", is_flag=True,
+              help="Skip the --last confirmation prompt.")
 @click.option("--dilation", default=15, show_default=True, type=int,
               help="Pixels to dilate each detected box. Larger = safer margin.")
 @click.option("--window", default=3, show_default=True, type=int,
@@ -208,10 +309,14 @@ def faces(input_path: Path, output_path: Path | None, dilation: int, window: int
                    "rendering the blurred video.")
 @click.option("-v", "--verbose", is_flag=True,
               help="Print progress (tqdm) and timing info to stderr.")
-def plates(input_path: Path, output_path: Path | None, dilation: int, window: int,
+def plates(input_path: Path | None, output_path: Path | None,
+           use_last: bool, yes: bool,
+           dilation: int, window: int,
            blur_mode: str, pixel_size: int, blur_strength: int,
            conf: float, gpu: bool, preview: bool, verbose: bool):
     """Blur license plates in INPUT_PATH using open-image-models YOLOv9."""
+    input_path = _resolve_input(input_path, use_last, yes)
+
     def factory():
         from sentryblur.detectors import OpenImagePlateDetector
         return OpenImagePlateDetector(conf=conf, use_gpu=gpu)
@@ -223,6 +328,32 @@ def plates(input_path: Path, output_path: Path | None, dilation: int, window: in
         preview=preview, verbose=verbose,
         detector_factory=factory, target_label="plate",
     )
+
+
+@cli.command()
+@click.argument("prompt_text", metavar="PROMPT")
+@click.argument("input_path", type=click.Path(exists=True, dir_okay=False, path_type=Path),
+                required=False, default=None)
+@click.option("--last", "use_last", is_flag=True,
+              help="Use the most recent clip saved by sentrysearch (see "
+                   "`sentrysearch search --save-top`). Cannot be combined "
+                   "with INPUT_PATH.")
+@click.option("-y", "--yes", is_flag=True,
+              help="Skip the --last confirmation prompt.")
+def prompt(prompt_text: str, input_path: Path | None,
+           use_last: bool, yes: bool):
+    """Blur arbitrary objects in INPUT_PATH matching PROMPT (stub)."""
+    input_path = _resolve_input(input_path, use_last, yes)
+    click.secho(
+        "Error: the `prompt` subcommand is not yet implemented. "
+        "Install the `[prompt]` extra and check back in a future release.",
+        fg="red", err=True,
+    )
+    click.echo(
+        f"(would have processed {input_path} with prompt: {prompt_text!r})",
+        err=True,
+    )
+    raise SystemExit(2)
 
 
 if __name__ == "__main__":

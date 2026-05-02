@@ -173,6 +173,125 @@ def test_plates_preview_smoke(tmp_path: Path, monkeypatch):
     assert expected_out.exists()
 
 
+class TestLastFlag:
+    """--last resolves the input path from the sentry-toolkit cache."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated_cache(self, tmp_path, monkeypatch):
+        cache_root = tmp_path / "cache"
+        monkeypatch.setattr(
+            "sentryblur._toolkit_cache.user_cache_dir",
+            lambda *a, **kw: str(cache_root),
+        )
+        return cache_root / "last_clip.json"
+
+    def _seed_cache(self, cache_file, *, path, age_seconds=0, saved_by="sentrysearch"):
+        import json
+        from datetime import datetime, timedelta, timezone
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        saved_at = datetime.now(timezone.utc) - timedelta(seconds=age_seconds)
+        cache_file.write_text(json.dumps({
+            "version": 1,
+            "path": str(path),
+            "saved_at": saved_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "saved_by": saved_by,
+        }))
+
+    def test_last_with_empty_cache_errors(self):
+        result = CliRunner().invoke(cli, ["prompt", "anything", "--last"])
+        assert result.exit_code == 1
+        assert "No cached clip found" in result.output
+
+    def test_last_with_valid_cache_confirms_then_proceeds(self, tmp_path, _isolated_cache):
+        clip = tmp_path / "clip.mp4"
+        clip.write_bytes(b"fake")
+        self._seed_cache(_isolated_cache, path=clip)
+
+        result = CliRunner().invoke(
+            cli, ["prompt", "anything", "--last"], input="y\n",
+        )
+        # Confirm shown, then prompt stub's not-implemented exit (2)
+        assert "Process this clip?" in result.output
+        assert "not yet implemented" in result.output
+        assert str(clip) in result.output
+        assert result.exit_code == 2
+
+    def test_last_with_valid_cache_and_yes_skips_confirm(self, tmp_path, _isolated_cache):
+        clip = tmp_path / "clip.mp4"
+        clip.write_bytes(b"fake")
+        self._seed_cache(_isolated_cache, path=clip)
+
+        result = CliRunner().invoke(
+            cli, ["prompt", "anything", "--last", "--yes"],
+        )
+        assert "Process this clip?" not in result.output
+        assert "not yet implemented" in result.output
+        assert result.exit_code == 2
+
+    def test_last_with_missing_file_errors(self, tmp_path, _isolated_cache):
+        gone = tmp_path / "deleted.mp4"  # never created
+        self._seed_cache(_isolated_cache, path=gone)
+
+        result = CliRunner().invoke(cli, ["prompt", "anything", "--last", "--yes"])
+        assert result.exit_code == 1
+        assert "no longer exists" in result.output
+        assert str(gone) in result.output
+
+    def test_last_with_too_old_cache_errors(self, tmp_path, _isolated_cache):
+        clip = tmp_path / "clip.mp4"
+        clip.write_bytes(b"fake")
+        self._seed_cache(_isolated_cache, path=clip, age_seconds=8 * 24 * 3600)
+
+        result = CliRunner().invoke(cli, ["prompt", "anything", "--last", "--yes"])
+        assert result.exit_code == 1
+        assert "more than 7 days old" in result.output
+
+    def test_last_with_stale_cache_warns_and_proceeds(self, tmp_path, _isolated_cache):
+        clip = tmp_path / "clip.mp4"
+        clip.write_bytes(b"fake")
+        self._seed_cache(_isolated_cache, path=clip, age_seconds=2 * 3600)
+
+        result = CliRunner().invoke(
+            cli, ["prompt", "anything", "--last", "--yes"],
+        )
+        assert "cached clip is from" in result.output
+        assert "ago" in result.output
+        # Stub still runs, so exit 2 (not implemented)
+        assert result.exit_code == 2
+
+    def test_last_and_input_both_provided_is_usage_error(self, tmp_path, _isolated_cache):
+        clip = tmp_path / "clip.mp4"
+        clip.write_bytes(b"fake")
+        self._seed_cache(_isolated_cache, path=clip)
+
+        result = CliRunner().invoke(
+            cli, ["prompt", "anything", str(clip), "--last"],
+        )
+        assert result.exit_code == 2  # click.UsageError
+        assert "mutually exclusive" in result.output
+
+    def test_neither_last_nor_input_is_missing_argument(self):
+        result = CliRunner().invoke(cli, ["prompt", "anything"])
+        assert result.exit_code == 2
+        assert "Missing argument" in result.output
+
+    def test_faces_supports_last(self, tmp_path, monkeypatch, _isolated_cache):
+        """--last works on faces too, not just prompt."""
+        pytest.importorskip("cv2")
+        monkeypatch.setattr(
+            "sentryblur.detectors.SCRFDFaceDetector", _StubFaceDetector,
+        )
+        clip = tmp_path / "clip.mp4"
+        _make_test_video(clip, frames=10, size=(64, 64))
+        self._seed_cache(_isolated_cache, path=clip)
+
+        result = CliRunner().invoke(
+            cli, ["faces", "--last", "--yes", "--preview"],
+        )
+        assert result.exit_code == 0, result.output
+        assert (tmp_path / "clip_preview.jpg").exists()
+
+
 def test_plates_missing_extra_clean_error(tmp_path: Path, monkeypatch):
     """Missing [plates] extra should produce a friendly install hint, not
     a stack trace."""
