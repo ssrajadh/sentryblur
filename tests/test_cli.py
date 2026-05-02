@@ -178,12 +178,11 @@ class TestLastFlag:
 
     @pytest.fixture(autouse=True)
     def _isolated_cache(self, tmp_path, monkeypatch):
-        cache_root = tmp_path / "cache"
+        cache_file = tmp_path / "cache" / "last_clip.json"
         monkeypatch.setattr(
-            "sentryblur._toolkit_cache.user_cache_dir",
-            lambda *a, **kw: str(cache_root),
+            "sentryblur._toolkit_cache._cache_path", lambda: cache_file,
         )
-        return cache_root / "last_clip.json"
+        return cache_file
 
     def _seed_cache(self, cache_file, *, path, age_seconds=0, saved_by="sentrysearch"):
         import json

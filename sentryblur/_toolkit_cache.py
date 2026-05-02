@@ -17,15 +17,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from platformdirs import user_cache_dir
-
-_APP_NAME = "sentry-toolkit"
+# Shared with sentrysearch — both tools read/write ~/.sentrysearch/last_clip.json.
+_CACHE_DIR_NAME = ".sentrysearch"
 _CACHE_FILENAME = "last_clip.json"
 _SCHEMA_VERSION = 1
 
 
 def _cache_path() -> Path:
-    return Path(user_cache_dir(_APP_NAME, appauthor=False)) / _CACHE_FILENAME
+    return Path.home() / _CACHE_DIR_NAME / _CACHE_FILENAME
 
 
 @dataclass(frozen=True)
