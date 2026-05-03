@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import click
 import numpy as np
 import pytest
 from click.testing import CliRunner
@@ -182,6 +183,31 @@ class TestLastFlag:
         monkeypatch.setattr(
             "sentryblur._toolkit_cache._cache_path", lambda: cache_file,
         )
+        # Bypass the duration gate — these tests use stub `b"fake"` files
+        # that real ffprobe/opencv can't parse. Gate behavior is covered
+        # in test_limits.py.
+        monkeypatch.setattr(
+            "sentryblur.limits.check_clip_length_for_prompt",
+            lambda *a, **kw: None,
+        )
+        # Stub blur_video_nl so the prompt subcommand is exercised for
+        # input-resolution behavior only — no real NL inference. NL
+        # pipeline behavior is covered in test_nl_detector.py.
+        from sentryblur.pipeline import BlurResult
+        def _fake_blur(input_path, output_path, text_prompt, **_kw):
+            click.echo(
+                f"[stub-nl] would process {input_path} prompt={text_prompt!r}",
+                err=True,
+            )
+            return BlurResult(
+                n_frames=1, fps=30.0, covered_frames=0,
+                output_path=output_path,
+            )
+        monkeypatch.setattr(
+            "sentryblur.pipeline.blur_video_nl", _fake_blur,
+        )
+        # _check_ffmpeg also short-circuits — we never actually run ffmpeg.
+        monkeypatch.setattr("sentryblur.cli._check_ffmpeg", lambda: None)
         return cache_file
 
     def _seed_cache(self, cache_file, *, path, age_seconds=0, saved_by="sentrysearch"):
@@ -209,11 +235,10 @@ class TestLastFlag:
         result = CliRunner().invoke(
             cli, ["prompt", "anything", "--last"], input="y\n",
         )
-        # Confirm shown, then prompt stub's not-implemented exit (2)
         assert "Process this clip?" in result.output
-        assert "not yet implemented" in result.output
+        assert "[stub-nl]" in result.output
         assert str(clip) in result.output
-        assert result.exit_code == 2
+        assert result.exit_code == 0, result.output
 
     def test_last_with_valid_cache_and_yes_skips_confirm(self, tmp_path, _isolated_cache):
         clip = tmp_path / "clip.mp4"
@@ -224,8 +249,8 @@ class TestLastFlag:
             cli, ["prompt", "anything", "--last", "--yes"],
         )
         assert "Process this clip?" not in result.output
-        assert "not yet implemented" in result.output
-        assert result.exit_code == 2
+        assert "[stub-nl]" in result.output
+        assert result.exit_code == 0, result.output
 
     def test_last_with_missing_file_errors(self, tmp_path, _isolated_cache):
         gone = tmp_path / "deleted.mp4"  # never created
@@ -255,8 +280,8 @@ class TestLastFlag:
         )
         assert "cached clip is from" in result.output
         assert "ago" in result.output
-        # Stub still runs, so exit 2 (not implemented)
-        assert result.exit_code == 2
+        assert "[stub-nl]" in result.output
+        assert result.exit_code == 0, result.output
 
     def test_last_and_input_both_provided_is_usage_error(self, tmp_path, _isolated_cache):
         clip = tmp_path / "clip.mp4"

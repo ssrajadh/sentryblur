@@ -18,14 +18,9 @@ plates = [
     "open-image-models",
 ]
 prompt = [
-    "torch",
-    "torchvision",
-    "transformers>=4.45,<4.53",
+    "torch>=2.4",
+    "transformers>=4.45",
     "accelerate",
-    "safetensors",
-    "sentencepiece",
-    "hydra-core",
-    "iopath",
 ]
 
 [project.scripts]
@@ -46,3 +41,6 @@ test = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --tb=short"
+markers = [
+    "gpu: integration tests that require CUDA or MPS hardware",
+]

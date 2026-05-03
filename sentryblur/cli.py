@@ -330,30 +330,100 @@ def plates(input_path: Path | None, output_path: Path | None,
     )
 
 
+_PROMPT_INSTALL_HINT = (
+    "Install with:\n"
+    "  uv tool install '.[prompt]'\n"
+    "  pip install git+https://github.com/facebookresearch/sam2.git"
+)
+
+
 @cli.command()
 @click.argument("prompt_text", metavar="PROMPT")
 @click.argument("input_path", type=click.Path(exists=True, dir_okay=False, path_type=Path),
                 required=False, default=None)
+@click.option("-o", "--output", "output_path", type=click.Path(dir_okay=False, path_type=Path),
+              default=None, help="Output path (default: <input>_blurred.<ext>).")
 @click.option("--last", "use_last", is_flag=True,
               help="Use the most recent clip saved by sentrysearch (see "
                    "`sentrysearch search --save-top`). Cannot be combined "
                    "with INPUT_PATH.")
 @click.option("-y", "--yes", is_flag=True,
-              help="Skip the --last confirmation prompt.")
-def prompt(prompt_text: str, input_path: Path | None,
-           use_last: bool, yes: bool):
-    """Blur arbitrary objects in INPUT_PATH matching PROMPT (stub)."""
+              help="Skip the --last and duration-gate confirmation prompts.")
+@click.option("--dilation", default=15, show_default=True, type=int,
+              help="Pixels to dilate the SAM 2 mask. Larger = safer margin.")
+@click.option("--window", default=3, show_default=True, type=int,
+              help="Temporal smoothing window (frames). Larger = catches dropouts.")
+@click.option("--blur-mode", default="pixelate", show_default=True,
+              type=click.Choice(["pixelate", "gaussian"]),
+              help="Redaction style.")
+@click.option("--pixel-size", default=16, show_default=True, type=int,
+              help="Mosaic block size (pixelate mode only).")
+@click.option("--blur-strength", default=51, show_default=True, type=int,
+              help="Gaussian kernel size (gaussian mode only). Must be odd.")
+@click.option("-v", "--verbose", is_flag=True,
+              help="Print progress and timing info to stderr.")
+def prompt(prompt_text: str, input_path: Path | None, output_path: Path | None,
+           use_last: bool, yes: bool, dilation: int, window: int,
+           blur_mode: str, pixel_size: int, blur_strength: int, verbose: bool):
+    """Blur arbitrary objects in INPUT_PATH matching PROMPT.
+
+    Uses Grounding DINO + SAM 2 for zero-shot promptable segmentation.
+    Requires the [prompt] extra and a separate SAM 2 install (see error
+    message if missing)."""
     input_path = _resolve_input(input_path, use_last, yes)
-    click.secho(
-        "Error: the `prompt` subcommand is not yet implemented. "
-        "Install the `[prompt]` extra and check back in a future release.",
-        fg="red", err=True,
-    )
-    click.echo(
-        f"(would have processed {input_path} with prompt: {prompt_text!r})",
-        err=True,
-    )
-    raise SystemExit(2)
+
+    from sentryblur.limits import check_clip_length_for_prompt
+    check_clip_length_for_prompt(input_path, auto_confirm=yes)
+
+    _check_ffmpeg()
+    if output_path is None:
+        output_path = _default_output(input_path)
+    if output_path.resolve() == input_path.resolve():
+        click.secho("Error: output must differ from input.", fg="red", err=True)
+        raise SystemExit(1)
+
+    try:
+        from sentryblur.pipeline import blur_video_nl
+        from sentryblur.nl_detector import NLDetectionFailure
+    except ImportError as e:
+        click.secho(
+            f"Error: missing dependencies for `prompt`: {e}\n\n"
+            f"{_PROMPT_INSTALL_HINT}",
+            fg="red", err=True,
+        )
+        raise SystemExit(1)
+
+    try:
+        click.echo(f"Blurring {input_path.name} -> {output_path.name}")
+        t0 = time.time()
+        result = blur_video_nl(
+            input_path, output_path, prompt_text,
+            dilation_px=dilation, temporal_window=window,
+            blur_mode=blur_mode, pixel_size=pixel_size,
+            blur_strength=blur_strength, verbose=verbose,
+        )
+        elapsed = time.time() - t0
+        video_s = result.n_frames / result.fps if result.fps else 0.0
+        speed = elapsed / video_s if video_s else 0.0
+        click.secho(
+            f"\nDone. {result.n_frames} frames, "
+            f"coverage {result.coverage_pct:.1f}%, "
+            f"{elapsed:.1f}s ({speed:.1f}x realtime)",
+            fg="green",
+        )
+        click.echo(f"Output: {result.output_path}")
+    except NLDetectionFailure as e:
+        click.secho(f"Error: {e}", fg="red", err=True)
+        raise SystemExit(1)
+    except ImportError as e:
+        click.secho(
+            f"Error: missing dependencies for `prompt`: {e}\n\n"
+            f"{_PROMPT_INSTALL_HINT}",
+            fg="red", err=True,
+        )
+        raise SystemExit(1)
+    except Exception as e:
+        _handle_error(e)
 
 
 if __name__ == "__main__":

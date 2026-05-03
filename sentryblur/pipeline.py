@@ -309,3 +309,93 @@ def generate_preview(
         raise
 
     return output_path
+
+
+def blur_video_nl(
+    input_path: Path,
+    output_path: Path,
+    text_prompt: str,
+    *,
+    dilation_px: int = 15,
+    temporal_window: int = 3,
+    blur_mode: str = "pixelate",
+    pixel_size: int = 16,
+    blur_strength: int = 51,
+    verbose: bool = False,
+) -> BlurResult:
+    """Mirror of blur_video() that uses NLDetector. SAM 2 already returns
+    pixel-precise masks per frame, so this skips the box->mask conversion
+    that blur_video does. Dilation, temporal smoothing, and blur application
+    are identical."""
+    if blur_mode not in ("pixelate", "gaussian"):
+        raise ValueError(f"unknown blur_mode: {blur_mode!r}")
+    if blur_strength % 2 == 0:
+        blur_strength += 1
+
+    input_path = Path(input_path).resolve()
+    output_path = Path(output_path).resolve()
+    if not input_path.exists():
+        raise FileNotFoundError(input_path)
+
+    t_start = time.perf_counter()
+    fps = _video_fps(input_path)
+
+    with tempfile.TemporaryDirectory(prefix="sentryblur_nl_") as tmp:
+        tmp_dir = Path(tmp)
+        frames_in = tmp_dir / "in"
+        frames_out = tmp_dir / "out"
+        frames_out.mkdir()
+
+        frames = _extract_frames(input_path, frames_in)
+        n = len(frames)
+        if n == 0:
+            raise ValueError(f"No frames extracted from {input_path}")
+
+        first = cv2.imread(str(frames[0]))
+        h, w = first.shape[:2]
+
+        if verbose:
+            print(
+                f"sentryblur: NL detection on {n} frames @ {w}x{h} "
+                f"(prompt: {text_prompt!r})",
+                file=sys.stderr,
+            )
+
+        from sentryblur.nl_detector import NLDetector
+        detector = NLDetector(text_prompt)
+        masks = detector.process_video(frames_in)
+        if len(masks) != n:
+            raise ValueError(
+                f"NLDetector returned {len(masks)} masks for {n} frames"
+            )
+
+        masks = [_dilate(m, dilation_px) for m in masks]
+        masks = _temporal_union(masks, temporal_window)
+
+        covered = 0
+        for idx, (fp, m) in enumerate(zip(frames, masks)):
+            frame = cv2.imread(str(fp))
+            if blur_mode == "pixelate":
+                blurred = _apply_pixelate(frame, m, pixel_size)
+            else:
+                blurred = _apply_blur(frame, m, blur_strength)
+            cv2.imwrite(str(frames_out / f"{idx:05d}.jpg"), blurred,
+                        [cv2.IMWRITE_JPEG_QUALITY, 95])
+            if m.any():
+                covered += 1
+
+        tmp_out = tmp_dir / "out.mp4"
+        _assemble(frames_out, fps, tmp_out)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(tmp_out), str(output_path))
+
+    if verbose:
+        elapsed = time.perf_counter() - t_start
+        print(
+            f"sentryblur: NL done in {elapsed:.1f}s -> {output_path}",
+            file=sys.stderr,
+        )
+
+    return BlurResult(
+        n_frames=n, fps=fps, covered_frames=covered, output_path=output_path,
+    )
