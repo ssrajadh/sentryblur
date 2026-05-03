@@ -338,21 +338,22 @@ _PROMPT_INSTALL_HINT = (
 
 
 @cli.command()
-@click.argument("prompt_text", metavar="PROMPT")
-@click.argument("input_path", type=click.Path(exists=True, dir_okay=False, path_type=Path),
-                required=False, default=None)
+@click.argument("input_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.argument("text_prompt", metavar="TEXT_PROMPT")
 @click.option("-o", "--output", "output_path", type=click.Path(dir_okay=False, path_type=Path),
-              default=None, help="Output path (default: <input>_blurred.<ext>).")
-@click.option("--last", "use_last", is_flag=True,
-              help="Use the most recent clip saved by sentrysearch (see "
-                   "`sentrysearch search --save-top`). Cannot be combined "
-                   "with INPUT_PATH.")
+              default=None,
+              help="Output path (default: <input>_blurred.<ext>, "
+                   "or <input>_preview.jpg with --preview).")
+@click.option("--preview", is_flag=True,
+              help="Render a 3x3 contact sheet of DINO detections instead "
+                   "of running the full SAM 2 propagation. Fast — useful "
+                   "for sanity-checking the prompt before committing.")
 @click.option("-y", "--yes", is_flag=True,
-              help="Skip the --last and duration-gate confirmation prompts.")
+              help="Skip the duration confirmation prompt.")
 @click.option("--dilation", default=15, show_default=True, type=int,
               help="Pixels to dilate the SAM 2 mask. Larger = safer margin.")
 @click.option("--window", default=3, show_default=True, type=int,
-              help="Temporal smoothing window (frames). Larger = catches dropouts.")
+              help="Temporal smoothing window (frames).")
 @click.option("--blur-mode", default="pixelate", show_default=True,
               type=click.Choice(["pixelate", "gaussian"]),
               help="Redaction style.")
@@ -362,29 +363,57 @@ _PROMPT_INSTALL_HINT = (
               help="Gaussian kernel size (gaussian mode only). Must be odd.")
 @click.option("-v", "--verbose", is_flag=True,
               help="Print progress and timing info to stderr.")
-def prompt(prompt_text: str, input_path: Path | None, output_path: Path | None,
-           use_last: bool, yes: bool, dilation: int, window: int,
+def prompt(input_path: Path, text_prompt: str, output_path: Path | None,
+           preview: bool, yes: bool, dilation: int, window: int,
            blur_mode: str, pixel_size: int, blur_strength: int, verbose: bool):
-    """Blur arbitrary objects in INPUT_PATH matching PROMPT.
+    """Redact arbitrary objects via natural language description.
 
-    Uses Grounding DINO + SAM 2 for zero-shot promptable segmentation.
-    Requires the [prompt] extra and a separate SAM 2 install (see error
-    message if missing)."""
-    input_path = _resolve_input(input_path, use_last, yes)
+    \b
+    Uses Grounding DINO + SAM 2 for zero-shot promptable video segmentation.
+    Slower than 'faces' or 'plates' (~25x realtime on Apple M1 Pro).
+    Best for one-off tasks rather than batch processing.
 
-    from sentryblur.limits import check_clip_length_for_prompt
+    \b
+    Examples:
+      sentryblur prompt clip.mp4 "license plate"
+      sentryblur prompt clip.mp4 "phone screen" --preview
+      sentryblur prompt clip.mp4 "person in red shirt" --yes
+    """
+    from sentryblur.limits import (
+        HardwareTier, check_clip_length_for_prompt, detect_hardware_tier,
+    )
+
+    tier = detect_hardware_tier()
+    if tier == HardwareTier.CPU:
+        click.secho(
+            "Error: prompt requires a GPU or Apple Silicon. "
+            "CPU is not supported.\n"
+            "Detected: CPU.\n"
+            "For face/plate redaction without a GPU, use 'sentryblur faces' "
+            "or 'sentryblur plates' instead.",
+            fg="red", err=True,
+        )
+        raise SystemExit(1)
+
     check_clip_length_for_prompt(input_path, auto_confirm=yes)
 
-    _check_ffmpeg()
+    if not preview:
+        _check_ffmpeg()
     if output_path is None:
-        output_path = _default_output(input_path)
+        output_path = (
+            _default_preview_output(input_path) if preview
+            else _default_output(input_path)
+        )
     if output_path.resolve() == input_path.resolve():
         click.secho("Error: output must differ from input.", fg="red", err=True)
         raise SystemExit(1)
 
     try:
-        from sentryblur.pipeline import blur_video_nl
         from sentryblur.nl_detector import NLDetectionFailure
+        if preview:
+            from sentryblur.pipeline import generate_preview_nl
+        else:
+            from sentryblur.pipeline import blur_video_nl
     except ImportError as e:
         click.secho(
             f"Error: missing dependencies for `prompt`: {e}\n\n"
@@ -394,10 +423,22 @@ def prompt(prompt_text: str, input_path: Path | None, output_path: Path | None,
         raise SystemExit(1)
 
     try:
+        if preview:
+            click.echo(f"Rendering preview {input_path.name} -> {output_path.name}")
+            preview_path = generate_preview_nl(
+                input_path, output_path, text_prompt,
+            )
+            click.secho(
+                f"Preview saved to {preview_path}. Review detections, then "
+                "re-run without --preview to render the full video.",
+                fg="green",
+            )
+            return
+
         click.echo(f"Blurring {input_path.name} -> {output_path.name}")
         t0 = time.time()
         result = blur_video_nl(
-            input_path, output_path, prompt_text,
+            input_path, output_path, text_prompt,
             dilation_px=dilation, temporal_window=window,
             blur_mode=blur_mode, pixel_size=pixel_size,
             blur_strength=blur_strength, verbose=verbose,
@@ -412,8 +453,12 @@ def prompt(prompt_text: str, input_path: Path | None, output_path: Path | None,
             fg="green",
         )
         click.echo(f"Output: {result.output_path}")
-    except NLDetectionFailure as e:
-        click.secho(f"Error: {e}", fg="red", err=True)
+    except NLDetectionFailure:
+        click.secho(
+            f"Error: Could not find {text_prompt!r} in the first frame. "
+            "Try a more specific or different prompt.",
+            fg="red", err=True,
+        )
         raise SystemExit(1)
     except ImportError as e:
         click.secho(

@@ -175,39 +175,19 @@ def test_plates_preview_smoke(tmp_path: Path, monkeypatch):
 
 
 class TestLastFlag:
-    """--last resolves the input path from the sentry-toolkit cache."""
+    """--last resolves the input path from the sentry-toolkit cache.
+    Uses `faces --preview` as the test harness — `prompt` does not
+    support --last by design."""
 
     @pytest.fixture(autouse=True)
-    def _isolated_cache(self, tmp_path, monkeypatch):
+    def _setup(self, tmp_path, monkeypatch):
         cache_file = tmp_path / "cache" / "last_clip.json"
         monkeypatch.setattr(
             "sentryblur._toolkit_cache._cache_path", lambda: cache_file,
         )
-        # Bypass the duration gate — these tests use stub `b"fake"` files
-        # that real ffprobe/opencv can't parse. Gate behavior is covered
-        # in test_limits.py.
         monkeypatch.setattr(
-            "sentryblur.limits.check_clip_length_for_prompt",
-            lambda *a, **kw: None,
+            "sentryblur.detectors.SCRFDFaceDetector", _StubFaceDetector,
         )
-        # Stub blur_video_nl so the prompt subcommand is exercised for
-        # input-resolution behavior only — no real NL inference. NL
-        # pipeline behavior is covered in test_nl_detector.py.
-        from sentryblur.pipeline import BlurResult
-        def _fake_blur(input_path, output_path, text_prompt, **_kw):
-            click.echo(
-                f"[stub-nl] would process {input_path} prompt={text_prompt!r}",
-                err=True,
-            )
-            return BlurResult(
-                n_frames=1, fps=30.0, covered_frames=0,
-                output_path=output_path,
-            )
-        monkeypatch.setattr(
-            "sentryblur.pipeline.blur_video_nl", _fake_blur,
-        )
-        # _check_ffmpeg also short-circuits — we never actually run ffmpeg.
-        monkeypatch.setattr("sentryblur.cli._check_ffmpeg", lambda: None)
         return cache_file
 
     def _seed_cache(self, cache_file, *, path, age_seconds=0, saved_by="sentrysearch"):
@@ -223,96 +203,223 @@ class TestLastFlag:
         }))
 
     def test_last_with_empty_cache_errors(self):
-        result = CliRunner().invoke(cli, ["prompt", "anything", "--last"])
+        result = CliRunner().invoke(cli, ["faces", "--last"])
         assert result.exit_code == 1
         assert "No cached clip found" in result.output
 
-    def test_last_with_valid_cache_confirms_then_proceeds(self, tmp_path, _isolated_cache):
+    def test_last_with_valid_cache_confirms_then_proceeds(self, tmp_path, _setup):
+        pytest.importorskip("cv2")
         clip = tmp_path / "clip.mp4"
-        clip.write_bytes(b"fake")
-        self._seed_cache(_isolated_cache, path=clip)
+        _make_test_video(clip, frames=8, size=(64, 64))
+        self._seed_cache(_setup, path=clip)
 
         result = CliRunner().invoke(
-            cli, ["prompt", "anything", "--last"], input="y\n",
+            cli, ["faces", "--last", "--preview"], input="y\n",
         )
         assert "Process this clip?" in result.output
-        assert "[stub-nl]" in result.output
         assert str(clip) in result.output
         assert result.exit_code == 0, result.output
+        assert (tmp_path / "clip_preview.jpg").exists()
 
-    def test_last_with_valid_cache_and_yes_skips_confirm(self, tmp_path, _isolated_cache):
-        clip = tmp_path / "clip.mp4"
-        clip.write_bytes(b"fake")
-        self._seed_cache(_isolated_cache, path=clip)
-
-        result = CliRunner().invoke(
-            cli, ["prompt", "anything", "--last", "--yes"],
-        )
-        assert "Process this clip?" not in result.output
-        assert "[stub-nl]" in result.output
-        assert result.exit_code == 0, result.output
-
-    def test_last_with_missing_file_errors(self, tmp_path, _isolated_cache):
-        gone = tmp_path / "deleted.mp4"  # never created
-        self._seed_cache(_isolated_cache, path=gone)
-
-        result = CliRunner().invoke(cli, ["prompt", "anything", "--last", "--yes"])
-        assert result.exit_code == 1
-        assert "no longer exists" in result.output
-        assert str(gone) in result.output
-
-    def test_last_with_too_old_cache_errors(self, tmp_path, _isolated_cache):
-        clip = tmp_path / "clip.mp4"
-        clip.write_bytes(b"fake")
-        self._seed_cache(_isolated_cache, path=clip, age_seconds=8 * 24 * 3600)
-
-        result = CliRunner().invoke(cli, ["prompt", "anything", "--last", "--yes"])
-        assert result.exit_code == 1
-        assert "more than 7 days old" in result.output
-
-    def test_last_with_stale_cache_warns_and_proceeds(self, tmp_path, _isolated_cache):
-        clip = tmp_path / "clip.mp4"
-        clip.write_bytes(b"fake")
-        self._seed_cache(_isolated_cache, path=clip, age_seconds=2 * 3600)
-
-        result = CliRunner().invoke(
-            cli, ["prompt", "anything", "--last", "--yes"],
-        )
-        assert "cached clip is from" in result.output
-        assert "ago" in result.output
-        assert "[stub-nl]" in result.output
-        assert result.exit_code == 0, result.output
-
-    def test_last_and_input_both_provided_is_usage_error(self, tmp_path, _isolated_cache):
-        clip = tmp_path / "clip.mp4"
-        clip.write_bytes(b"fake")
-        self._seed_cache(_isolated_cache, path=clip)
-
-        result = CliRunner().invoke(
-            cli, ["prompt", "anything", str(clip), "--last"],
-        )
-        assert result.exit_code == 2  # click.UsageError
-        assert "mutually exclusive" in result.output
-
-    def test_neither_last_nor_input_is_missing_argument(self):
-        result = CliRunner().invoke(cli, ["prompt", "anything"])
-        assert result.exit_code == 2
-        assert "Missing argument" in result.output
-
-    def test_faces_supports_last(self, tmp_path, monkeypatch, _isolated_cache):
-        """--last works on faces too, not just prompt."""
+    def test_last_with_valid_cache_and_yes_skips_confirm(self, tmp_path, _setup):
         pytest.importorskip("cv2")
-        monkeypatch.setattr(
-            "sentryblur.detectors.SCRFDFaceDetector", _StubFaceDetector,
-        )
         clip = tmp_path / "clip.mp4"
-        _make_test_video(clip, frames=10, size=(64, 64))
-        self._seed_cache(_isolated_cache, path=clip)
+        _make_test_video(clip, frames=8, size=(64, 64))
+        self._seed_cache(_setup, path=clip)
 
         result = CliRunner().invoke(
             cli, ["faces", "--last", "--yes", "--preview"],
         )
+        assert "Process this clip?" not in result.output
         assert result.exit_code == 0, result.output
+
+    def test_last_with_missing_file_errors(self, tmp_path, _setup):
+        gone = tmp_path / "deleted.mp4"  # never created
+        self._seed_cache(_setup, path=gone)
+
+        result = CliRunner().invoke(cli, ["faces", "--last", "--yes"])
+        assert result.exit_code == 1
+        assert "no longer exists" in result.output
+        assert str(gone) in result.output
+
+    def test_last_with_too_old_cache_errors(self, tmp_path, _setup):
+        clip = tmp_path / "clip.mp4"
+        clip.write_bytes(b"fake")  # never read — resolver rejects on age
+        self._seed_cache(_setup, path=clip, age_seconds=8 * 24 * 3600)
+
+        result = CliRunner().invoke(cli, ["faces", "--last", "--yes"])
+        assert result.exit_code == 1
+        assert "more than 7 days old" in result.output
+
+    def test_last_with_stale_cache_warns_and_proceeds(self, tmp_path, _setup):
+        pytest.importorskip("cv2")
+        clip = tmp_path / "clip.mp4"
+        _make_test_video(clip, frames=8, size=(64, 64))
+        self._seed_cache(_setup, path=clip, age_seconds=2 * 3600)
+
+        result = CliRunner().invoke(
+            cli, ["faces", "--last", "--yes", "--preview"],
+        )
+        assert "cached clip is from" in result.output
+        assert "ago" in result.output
+        assert result.exit_code == 0, result.output
+
+    def test_last_and_input_both_provided_is_usage_error(self, tmp_path, _setup):
+        clip = tmp_path / "clip.mp4"
+        clip.write_bytes(b"fake")
+        self._seed_cache(_setup, path=clip)
+
+        result = CliRunner().invoke(
+            cli, ["faces", str(clip), "--last"],
+        )
+        assert result.exit_code == 2
+        assert "mutually exclusive" in result.output
+
+    def test_neither_last_nor_input_is_missing_argument(self):
+        result = CliRunner().invoke(cli, ["faces"])
+        assert result.exit_code == 2
+        assert "Missing argument" in result.output
+
+
+class TestPromptCommand:
+    """Tests for `sentryblur prompt INPUT TEXT_PROMPT`."""
+
+    @pytest.fixture
+    def _force_tier(self, monkeypatch):
+        from sentryblur.limits import HardwareTier
+        def _set(tier: HardwareTier):
+            monkeypatch.setattr(
+                "sentryblur.limits.detect_hardware_tier", lambda: tier,
+            )
+            # Bypass duration gate for these tests; gating is covered in
+            # test_limits.py.
+            monkeypatch.setattr(
+                "sentryblur.limits.check_clip_length_for_prompt",
+                lambda *a, **kw: None,
+            )
+        return _set
+
+    def test_help_does_not_load_torch(self, monkeypatch):
+        # If `prompt --help` triggered the torch import, that would
+        # blow context for users without [prompt] installed. Verify by
+        # asserting torch is NOT in sys.modules after --help (best
+        # effort: only meaningful if torch wasn't already imported).
+        import sys as _sys
+        torch_was_loaded = "torch" in _sys.modules
+        result = CliRunner().invoke(cli, ["prompt", "--help"])
+        assert result.exit_code == 0
+        assert "TEXT_PROMPT" in result.output
+        assert "natural language" in result.output.lower()
+        if not torch_was_loaded:
+            assert "torch" not in _sys.modules, (
+                "prompt --help triggered a torch import"
+            )
+
+    def test_cpu_tier_errors(self, tmp_path, _force_tier):
+        from sentryblur.limits import HardwareTier
+        _force_tier(HardwareTier.CPU)
+        inp = tmp_path / "clip.mp4"
+        inp.write_bytes(b"fake")  # validation passes; CPU check fires first
+
+        result = CliRunner().invoke(cli, ["prompt", str(inp), "face"])
+        assert result.exit_code == 1
+        assert "CPU is not supported" in result.output
+        assert "sentryblur faces" in result.output
+
+    def test_missing_text_prompt_is_usage_error(self, tmp_path):
+        inp = tmp_path / "clip.mp4"
+        inp.write_bytes(b"fake")
+        result = CliRunner().invoke(cli, ["prompt", str(inp)])
+        assert result.exit_code == 2
+        assert "Missing argument" in result.output
+
+    def test_full_path_runs_with_mocked_detector(
+        self, tmp_path, monkeypatch, _force_tier,
+    ):
+        pytest.importorskip("cv2")
+        from sentryblur.limits import HardwareTier
+        _force_tier(HardwareTier.MPS_MID)
+
+        inp = tmp_path / "clip.mp4"
+        out = tmp_path / "out.mp4"
+        _make_test_video(inp, frames=8, size=(64, 64))
+
+        class _FakeNL:
+            def __init__(self, text_prompt, device="auto"):
+                pass
+            def process_video(self, frame_dir):
+                from pathlib import Path as _P
+                frames = sorted(_P(frame_dir).glob("*.jpg"))
+                return [np.ones((64, 64), dtype=bool) for _ in frames]
+
+        monkeypatch.setattr("sentryblur.nl_detector.NLDetector", _FakeNL)
+
+        result = CliRunner().invoke(
+            cli, ["prompt", str(inp), "anything", "-o", str(out)],
+        )
+        assert result.exit_code == 0, result.output
+        assert out.exists()
+        assert "Done" in result.output
+
+    def test_detection_failure_clean_error(
+        self, tmp_path, monkeypatch, _force_tier,
+    ):
+        pytest.importorskip("cv2")
+        from sentryblur.limits import HardwareTier
+        from sentryblur.nl_detector import NLDetectionFailure
+        _force_tier(HardwareTier.MPS_MID)
+
+        inp = tmp_path / "clip.mp4"
+        _make_test_video(inp, frames=5, size=(64, 64))
+
+        class _FailingNL:
+            def __init__(self, *_a, **_kw):
+                pass
+            def process_video(self, _frame_dir):
+                raise NLDetectionFailure("inner detail")
+
+        monkeypatch.setattr("sentryblur.nl_detector.NLDetector", _FailingNL)
+
+        result = CliRunner().invoke(cli, ["prompt", str(inp), "unicorn"])
+        assert result.exit_code == 1
+        assert "Could not find 'unicorn' in the first frame" in result.output
+        assert "more specific or different prompt" in result.output
+        assert "Traceback" not in result.output
+
+    def test_preview_calls_generate_preview_nl(
+        self, tmp_path, monkeypatch, _force_tier,
+    ):
+        pytest.importorskip("cv2")
+        from sentryblur.limits import HardwareTier
+        _force_tier(HardwareTier.MPS_MID)
+
+        inp = tmp_path / "clip.mp4"
+        _make_test_video(inp, frames=8, size=(64, 64))
+
+        called = {"preview": 0, "blur": 0}
+
+        def _fake_preview(input_path, output_path, text_prompt, **_kw):
+            called["preview"] += 1
+            output_path.write_bytes(b"fake-jpg")
+            return output_path
+
+        def _fake_blur(*_a, **_kw):
+            called["blur"] += 1
+            raise AssertionError("blur_video_nl should not be called with --preview")
+
+        monkeypatch.setattr(
+            "sentryblur.pipeline.generate_preview_nl", _fake_preview,
+        )
+        monkeypatch.setattr(
+            "sentryblur.pipeline.blur_video_nl", _fake_blur,
+        )
+
+        result = CliRunner().invoke(
+            cli, ["prompt", str(inp), "phone screen", "--preview"],
+        )
+        assert result.exit_code == 0, result.output
+        assert called["preview"] == 1
+        assert called["blur"] == 0
         assert (tmp_path / "clip_preview.jpg").exists()
 
 

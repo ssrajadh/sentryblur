@@ -244,49 +244,55 @@ def generate_preview(
         if n <= 0:
             raise ValueError(f"Could not read frame count from {input_path}")
 
-        # 9 evenly-spaced indices: 0, N/8, 2N/8, ..., 7N/8, N-1.
-        # Dedupe and pad in case N is small.
-        raw = [0, n // 8, 2 * n // 8, 3 * n // 8, 4 * n // 8,
-               5 * n // 8, 6 * n // 8, 7 * n // 8, n - 1]
-        seen: list[int] = []
-        for i in raw:
-            if i not in seen:
-                seen.append(i)
-        while len(seen) < 9:
-            seen.append(seen[-1])
-        indices = seen[:9]
-
         cells: list[np.ndarray] = []
-        for idx in indices:
+        for idx in _keyframe_indices(n):
             cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
             ok, frame = cap.read()
             if not ok or frame is None:
-                # Fall back to a black placeholder so the grid stays 3x3.
                 frame = np.zeros((720, 1280, 3), dtype=np.uint8)
-
-            det = detector.detect(frame)
-            if det.size:
-                boxes = det[:, :4].astype(int)
-                scores = det[:, 4] if det.ndim == 2 and det.shape[1] >= 5 else None
-            else:
-                boxes = np.empty((0, 4), dtype=int)
-                scores = None
-
-            annotated = frame.copy()
-            for i, (x0, y0, x1, y1) in enumerate(boxes):
-                cv2.rectangle(annotated, (x0, y0), (x1, y1), (0, 255, 0), 2)
-                label = f"{scores[i]:.2f}" if scores is not None else "det"
-                # Top-left of box; nudge inside frame if box hugs the top edge.
-                ty = y0 - 5 if y0 > 15 else y0 + 15
-                cv2.putText(annotated, label, (x0, ty),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5,
-                            (0, 255, 0), 1, cv2.LINE_AA)
-
-            cells.append(annotated)
+            cells.append(_annotate_boxes(frame, detector.detect(frame)))
     finally:
         cap.release()
 
-    # Compose 3x3 grid, clamping to max_width.
+    return _write_3x3_grid(cells, output_path, max_width)
+
+
+def _annotate_boxes(
+    frame: np.ndarray,
+    detections: np.ndarray,
+    color: tuple[int, int, int] = (0, 255, 0),
+) -> np.ndarray:
+    """Draw xyxy boxes (and optional confidence labels) onto a copy of `frame`."""
+    if detections.size == 0:
+        return frame.copy()
+    boxes = detections[:, :4].astype(int)
+    scores = (
+        detections[:, 4]
+        if detections.ndim == 2 and detections.shape[1] >= 5 else None
+    )
+    annotated = frame.copy()
+    for i, (x0, y0, x1, y1) in enumerate(boxes):
+        cv2.rectangle(annotated, (x0, y0), (x1, y1), color, 2)
+        label = f"{scores[i]:.2f}" if scores is not None else "det"
+        ty = y0 - 5 if y0 > 15 else y0 + 15
+        cv2.putText(annotated, label, (x0, ty),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+    return annotated
+
+
+def _keyframe_indices(n: int) -> list[int]:
+    raw = [0, n // 8, 2 * n // 8, 3 * n // 8, 4 * n // 8,
+           5 * n // 8, 6 * n // 8, 7 * n // 8, n - 1]
+    seen: list[int] = []
+    for i in raw:
+        if i not in seen:
+            seen.append(i)
+    while len(seen) < 9:
+        seen.append(seen[-1])
+    return seen[:9]
+
+
+def _write_3x3_grid(cells: list[np.ndarray], output_path: Path, max_width: int) -> Path:
     cell_w = max_width // 3
     h, w = cells[0].shape[:2]
     cell_h = max(1, int(round(cell_w * h / w)))
@@ -399,3 +405,41 @@ def blur_video_nl(
     return BlurResult(
         n_frames=n, fps=fps, covered_frames=covered, output_path=output_path,
     )
+
+
+def generate_preview_nl(
+    input_path: Path,
+    output_path: Path,
+    text_prompt: str,
+    *,
+    max_width: int = 1920,
+) -> Path:
+    """3x3 contact sheet of DINO detections per keyframe — SAM 2 is not
+    invoked, so this is fast (~5s on Apple Silicon for DINO load + 9
+    inferences). Use to sanity-check the prompt before committing to a
+    full SAM 2 propagation."""
+    input_path = Path(input_path).resolve()
+    output_path = Path(output_path).resolve()
+    if not input_path.exists():
+        raise FileNotFoundError(input_path)
+
+    from sentryblur.nl_detector import NLDetector
+    detector = NLDetector(text_prompt)
+
+    cap = cv2.VideoCapture(str(input_path))
+    try:
+        n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if n <= 0:
+            raise ValueError(f"Could not read frame count from {input_path}")
+
+        cells: list[np.ndarray] = []
+        for idx in _keyframe_indices(n):
+            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+            cells.append(_annotate_boxes(frame, detector.detect_boxes(frame)))
+    finally:
+        cap.release()
+
+    return _write_3x3_grid(cells, output_path, max_width)

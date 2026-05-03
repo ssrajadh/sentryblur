@@ -79,8 +79,10 @@ def test_process_video_raises_on_empty_dino_detection(
     cv2.imwrite(str(tmp_path / "00001.jpg"), frame)
 
     det = NLDetector("nonexistent thing")
-    monkeypatch.setattr(det, "_ensure_dino", lambda: None)
-    monkeypatch.setattr(det, "_dino_detect", lambda _f: [])
+    monkeypatch.setattr(
+        det, "detect_boxes",
+        lambda _f: np.empty((0, 5), dtype=np.float32),
+    )
 
     with pytest.raises(NLDetectionFailure) as exc:
         det.process_video(tmp_path)

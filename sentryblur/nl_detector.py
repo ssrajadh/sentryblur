@@ -121,7 +121,10 @@ class NLDetector:
             _SAM2_CONFIG, str(ckpt), device=self._device,
         )
 
-    def _dino_detect(self, frame_bgr: np.ndarray) -> list[list[float]]:
+    def detect_boxes(self, frame_bgr: np.ndarray) -> np.ndarray:
+        """DINO-only single-frame detection. Returns (N, 5) xyxy + score.
+        Used by the preview path; does not invoke SAM 2."""
+        self._ensure_dino()
         import torch
         from PIL import Image
 
@@ -141,12 +144,12 @@ class NLDetector:
             target_sizes=[(h, w)],
         )
         if not results:
-            return []
+            return np.empty((0, 5), dtype=np.float32)
         boxes = results[0]["boxes"].cpu().numpy()
-        return [
-            [float(x0), float(y0), float(x1), float(y1)]
-            for x0, y0, x1, y1 in boxes
-        ]
+        scores = results[0]["scores"].cpu().numpy()
+        if len(boxes) == 0:
+            return np.empty((0, 5), dtype=np.float32)
+        return np.column_stack([boxes, scores]).astype(np.float32)
 
     def process_video(self, frame_dir: Path) -> list[np.ndarray]:
         """Return one boolean (H, W) mask per JPG frame in `frame_dir`,
@@ -156,17 +159,17 @@ class NLDetector:
         if not frames:
             raise ValueError(f"No JPG frames in {frame_dir}")
 
-        self._ensure_dino()
         first = cv2.imread(str(frames[0]))
         if first is None:
             raise ValueError(f"Could not read first frame: {frames[0]}")
-        boxes = self._dino_detect(first)
-        if not boxes:
+        detections = self.detect_boxes(first)  # (N, 5) xyxy + score
+        if len(detections) == 0:
             raise NLDetectionFailure(
                 f"No targets found for prompt {self._text_prompt!r} in the "
                 "first frame. Try a more specific prompt, or verify the "
                 "target is visible at the start of the clip."
             )
+        boxes = detections[:, :4]
 
         self._ensure_sam()
         h, w = first.shape[:2]
@@ -185,12 +188,12 @@ class NLDetector:
                 offload_state_to_cpu=True,
             )
             self._sam_predictor.reset_state(state)
-            for obj_id, box in enumerate(boxes):
+            for obj_id in range(boxes.shape[0]):
                 self._sam_predictor.add_new_points_or_box(
                     inference_state=state,
                     frame_idx=0,
                     obj_id=obj_id,
-                    box=np.asarray(box, dtype=np.float32),
+                    box=np.asarray(boxes[obj_id], dtype=np.float32),
                 )
             for frame_idx, _obj_ids, mask_logits in (
                 self._sam_predictor.propagate_in_video(state)
