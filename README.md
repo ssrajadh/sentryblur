@@ -1,5 +1,7 @@
 # SentryBlur
 
+[https://github.com/user-attachments/assets/87710fbb-8d63-44ea-b011-5fc9b46512c0](https://github.com/user-attachments/assets/6af8f234-63e2-42e5-b896-e8f24c8f3ee8)
+
 Local, offline face and license plate redaction for video, with one command.
 
 ## Quickstart
