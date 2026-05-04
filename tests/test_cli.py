@@ -174,6 +174,27 @@ def test_plates_preview_smoke(tmp_path: Path, monkeypatch):
     assert expected_out.exists()
 
 
+def test_successful_preview_opens_output(tmp_path: Path, monkeypatch):
+    """After a preview render succeeds, the CLI hands the output to the
+    system file opener."""
+    pytest.importorskip("cv2")
+    monkeypatch.setattr(
+        "sentryblur.detectors.SCRFDFaceDetector", _StubFaceDetector,
+    )
+    opened: list[str] = []
+    monkeypatch.setattr(
+        "sentryblur.cli._open_file", lambda p: opened.append(p),
+    )
+
+    inp = tmp_path / "clip.mp4"
+    expected_out = tmp_path / "clip_preview.jpg"
+    _make_test_video(inp, frames=8, size=(64, 64))
+
+    result = CliRunner().invoke(cli, ["faces", str(inp), "--preview"])
+    assert result.exit_code == 0, result.output
+    assert opened == [str(expected_out)]
+
+
 class TestLastFlag:
     """--last resolves the input path from the sentry-toolkit cache.
     Uses `faces --preview` as the test harness — `prompt` does not

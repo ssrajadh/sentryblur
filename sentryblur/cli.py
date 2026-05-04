@@ -2,12 +2,33 @@
 
 from __future__ import annotations
 
+import os
+import platform
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
 
 import click
+
+
+def _open_file(path: str) -> None:
+    """Open a file with the system's default application. Best-effort —
+    swallow any failure (no GUI session, missing opener, etc.)."""
+    try:
+        system = platform.system()
+        if system == "Darwin":
+            subprocess.Popen(["open", path])
+        elif system == "Windows":
+            os.startfile(path)  # type: ignore[attr-defined]
+        else:
+            subprocess.Popen(
+                ["xdg-open", path],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+    except Exception:
+        pass
 
 
 def _default_output(input_path: Path) -> Path:
@@ -174,6 +195,7 @@ def _run_blur_command(
                 "re-run without --preview to render the full video.",
                 fg="green",
             )
+            _open_file(str(preview_path))
             return
 
         click.echo(f"Blurring {input_path.name} -> {output_path.name}")
@@ -210,6 +232,7 @@ def _run_blur_command(
             fg="green",
         )
         click.echo(f"Output: {result.output_path}")
+        _open_file(str(result.output_path))
 
     except Exception as e:
         _handle_error(e)
@@ -433,6 +456,7 @@ def prompt(input_path: Path, text_prompt: str, output_path: Path | None,
                 "re-run without --preview to render the full video.",
                 fg="green",
             )
+            _open_file(str(preview_path))
             return
 
         click.echo(f"Blurring {input_path.name} -> {output_path.name}")
@@ -453,6 +477,7 @@ def prompt(input_path: Path, text_prompt: str, output_path: Path | None,
             fg="green",
         )
         click.echo(f"Output: {result.output_path}")
+        _open_file(str(result.output_path))
     except NLDetectionFailure:
         click.secho(
             f"Error: Could not find {text_prompt!r} in the first frame. "
