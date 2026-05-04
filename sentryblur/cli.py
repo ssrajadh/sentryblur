@@ -361,8 +361,11 @@ _PROMPT_INSTALL_HINT = (
 
 
 @cli.command()
-@click.argument("input_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
-@click.argument("text_prompt", metavar="TEXT_PROMPT")
+@click.argument("input_path", required=False, default=None)
+@click.argument("text_prompt", metavar="TEXT_PROMPT", required=False, default=None)
+@click.option("--last", "use_last", is_flag=True,
+              help="Use the most recent clip saved by sentrysearch. "
+                   "Cannot be combined with INPUT_PATH.")
 @click.option("-o", "--output", "output_path", type=click.Path(dir_okay=False, path_type=Path),
               default=None,
               help="Output path (default: <input>_blurred.<ext>, "
@@ -372,7 +375,7 @@ _PROMPT_INSTALL_HINT = (
                    "of running the full SAM 2 propagation. Fast — useful "
                    "for sanity-checking the prompt before committing.")
 @click.option("-y", "--yes", is_flag=True,
-              help="Skip the duration confirmation prompt.")
+              help="Skip the --last and duration confirmation prompts.")
 @click.option("--dilation", default=15, show_default=True, type=int,
               help="Pixels to dilate the SAM 2 mask. Larger = safer margin.")
 @click.option("--window", default=3, show_default=True, type=int,
@@ -386,7 +389,8 @@ _PROMPT_INSTALL_HINT = (
               help="Gaussian kernel size (gaussian mode only). Must be odd.")
 @click.option("-v", "--verbose", is_flag=True,
               help="Print progress and timing info to stderr.")
-def prompt(input_path: Path, text_prompt: str, output_path: Path | None,
+def prompt(input_path: str | None, text_prompt: str | None,
+           use_last: bool, output_path: Path | None,
            preview: bool, yes: bool, dilation: int, window: int,
            blur_mode: str, pixel_size: int, blur_strength: int, verbose: bool):
     """Redact arbitrary objects via natural language description.
@@ -400,8 +404,32 @@ def prompt(input_path: Path, text_prompt: str, output_path: Path | None,
     Examples:
       sentryblur prompt clip.mp4 "license plate"
       sentryblur prompt clip.mp4 "phone screen" --preview
+      sentryblur prompt --last "license plate"
       sentryblur prompt clip.mp4 "person in red shirt" --yes
     """
+    # Click fills positionals left-to-right. With INPUT optional + TEXT_PROMPT
+    # optional, `prompt --last "PROMPT"` lands "PROMPT" in input_path. Detect
+    # that case and swap.
+    if use_last and input_path is not None and text_prompt is None:
+        text_prompt = input_path
+        input_path = None
+
+    if not text_prompt:
+        raise click.UsageError("Missing argument 'TEXT_PROMPT'.")
+
+    # Validate INPUT_PATH manually since we dropped Click's exists= check
+    # (would have rejected "PROMPT" being momentarily in this slot above).
+    resolved_input: Path | None = None
+    if input_path is not None:
+        resolved_input = Path(input_path)
+        if not resolved_input.is_file():
+            raise click.UsageError(
+                f"Invalid value for 'INPUT_PATH': "
+                f"Path '{resolved_input}' does not exist.",
+            )
+
+    input_path = _resolve_input(resolved_input, use_last, yes)
+
     from sentryblur.limits import (
         HardwareTier, check_clip_length_for_prompt, detect_hardware_tier,
     )

@@ -444,6 +444,117 @@ class TestPromptCommand:
         assert (tmp_path / "clip_preview.jpg").exists()
 
 
+class TestPromptLastFlag:
+    """--last support on the prompt subcommand. Mirrors TestLastFlag's
+    coverage but for the prompt path; mocks NLDetector + hardware tier
+    so torch isn't required."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self, tmp_path, monkeypatch):
+        cache_file = tmp_path / "cache" / "last_clip.json"
+        monkeypatch.setattr(
+            "sentryblur._toolkit_cache._cache_path", lambda: cache_file,
+        )
+        from sentryblur.limits import HardwareTier
+        monkeypatch.setattr(
+            "sentryblur.limits.detect_hardware_tier",
+            lambda: HardwareTier.MPS_MID,
+        )
+        monkeypatch.setattr(
+            "sentryblur.limits.check_clip_length_for_prompt",
+            lambda *a, **kw: None,
+        )
+
+        class _FakeNL:
+            def __init__(self, text_prompt, device="auto"):
+                pass
+            def process_video(self, frame_dir):
+                from pathlib import Path as _P
+                frames = sorted(_P(frame_dir).glob("*.jpg"))
+                return [np.ones((64, 64), dtype=bool) for _ in frames]
+
+        monkeypatch.setattr(
+            "sentryblur.nl_detector.NLDetector", _FakeNL,
+        )
+        return cache_file
+
+    def _seed_cache(self, cache_file, *, path, age_seconds=0,
+                    saved_by="sentrysearch"):
+        import json
+        from datetime import datetime, timedelta, timezone
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        saved_at = datetime.now(timezone.utc) - timedelta(seconds=age_seconds)
+        cache_file.write_text(json.dumps({
+            "version": 1,
+            "path": str(path),
+            "saved_at": saved_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "saved_by": saved_by,
+        }))
+
+    def test_empty_cache_errors(self):
+        result = CliRunner().invoke(cli, ["prompt", "--last", "face"])
+        assert result.exit_code == 1
+        assert "No cached clip found" in result.output
+
+    def test_valid_cache_with_yes_proceeds(self, tmp_path, _setup):
+        pytest.importorskip("cv2")
+        clip = tmp_path / "clip.mp4"
+        _make_test_video(clip, frames=8, size=(64, 64))
+        self._seed_cache(_setup, path=clip)
+
+        result = CliRunner().invoke(
+            cli, ["prompt", "--last", "--yes", "face"],
+        )
+        assert result.exit_code == 0, result.output
+        assert "Done" in result.output
+
+    def test_stale_cache_warns_and_proceeds(self, tmp_path, _setup):
+        pytest.importorskip("cv2")
+        clip = tmp_path / "clip.mp4"
+        _make_test_video(clip, frames=8, size=(64, 64))
+        self._seed_cache(_setup, path=clip, age_seconds=2 * 3600)
+
+        result = CliRunner().invoke(
+            cli, ["prompt", "--last", "--yes", "face"],
+        )
+        assert "cached clip is from" in result.output
+        assert "ago" in result.output
+        assert result.exit_code == 0, result.output
+
+    def test_too_old_cache_errors(self, tmp_path, _setup):
+        clip = tmp_path / "clip.mp4"
+        clip.write_bytes(b"fake")  # exists, but never read — age check fires first
+        self._seed_cache(_setup, path=clip, age_seconds=8 * 24 * 3600)
+
+        result = CliRunner().invoke(
+            cli, ["prompt", "--last", "--yes", "face"],
+        )
+        assert result.exit_code == 1
+        assert "more than 7 days old" in result.output
+
+    def test_input_and_last_mutually_exclusive(self, tmp_path, _setup):
+        pytest.importorskip("cv2")
+        clip = tmp_path / "clip.mp4"
+        _make_test_video(clip, frames=4, size=(64, 64))
+        self._seed_cache(_setup, path=clip)
+
+        result = CliRunner().invoke(
+            cli, ["prompt", str(clip), "face", "--last"],
+        )
+        assert result.exit_code == 2
+        assert "mutually exclusive" in result.output
+
+    def test_last_without_text_prompt_errors(self):
+        result = CliRunner().invoke(cli, ["prompt", "--last"])
+        assert result.exit_code == 2
+        assert "Missing argument" in result.output
+
+    def test_no_input_no_last_errors(self):
+        result = CliRunner().invoke(cli, ["prompt"])
+        assert result.exit_code == 2
+        assert "Missing argument" in result.output
+
+
 def test_plates_missing_extra_clean_error(tmp_path: Path, monkeypatch):
     """Missing [plates] extra should produce a friendly install hint, not
     a stack trace."""
