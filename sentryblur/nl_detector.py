@@ -139,7 +139,7 @@ class NLDetector:
         results = self._dino_processor.post_process_grounded_object_detection(
             outputs,
             inputs.input_ids,
-            box_threshold=_DINO_BOX_THRESHOLD,
+            threshold=_DINO_BOX_THRESHOLD,
             text_threshold=_DINO_TEXT_THRESHOLD,
             target_sizes=[(h, w)],
         )
