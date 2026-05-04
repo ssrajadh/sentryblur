@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import sys
 import urllib.request
+import warnings
 from pathlib import Path
 
 import cv2
@@ -117,9 +118,15 @@ class NLDetector:
             tmp = ckpt.with_suffix(ckpt.suffix + ".part")
             urllib.request.urlretrieve(_SAM2_CHECKPOINT_URL, str(tmp))
             tmp.replace(ckpt)
-        self._sam_predictor = build_sam2_video_predictor(
-            _SAM2_CONFIG, str(ckpt), device=self._device,
-        )
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="cannot import name '_C' from 'sam2'",
+                category=UserWarning,
+            )
+            self._sam_predictor = build_sam2_video_predictor(
+                _SAM2_CONFIG, str(ckpt), device=self._device,
+            )
 
     def detect_boxes(self, frame_bgr: np.ndarray) -> np.ndarray:
         """DINO-only single-frame detection. Returns (N, 5) xyxy + score.
@@ -179,7 +186,12 @@ class NLDetector:
         masks: list[np.ndarray] = [
             np.zeros((h, w), dtype=bool) for _ in range(n)
         ]
-        with torch.inference_mode():
+        with torch.inference_mode(), warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="cannot import name '_C' from 'sam2'",
+                category=UserWarning,
+            )
             # Required on MPS — without these flags, unified memory blows
             # up on clips longer than ~20 seconds.
             state = self._sam_predictor.init_state(
