@@ -443,6 +443,49 @@ class TestPromptCommand:
         assert called["blur"] == 0
         assert (tmp_path / "clip_preview.jpg").exists()
 
+    def test_preview_skips_duration_check(self, tmp_path, monkeypatch):
+        """--preview only runs DINO on 9 keyframes (no SAM 2 propagation), so
+        runtime is ~constant in clip length. The duration confirmation prompt
+        — calibrated for full propagation — must not fire in preview mode.
+        Regression test: previously check_clip_length_for_prompt ran
+        unconditionally, before the `if not preview` guard."""
+        pytest.importorskip("cv2")
+        from sentryblur.limits import HardwareTier
+
+        monkeypatch.setattr(
+            "sentryblur.limits.detect_hardware_tier",
+            lambda: HardwareTier.MPS_MID,
+        )
+
+        check_calls: list[tuple] = []
+
+        def _spy_check(*args, **kwargs):
+            check_calls.append((args, kwargs))
+
+        monkeypatch.setattr(
+            "sentryblur.limits.check_clip_length_for_prompt", _spy_check,
+        )
+
+        def _fake_preview(input_path, output_path, text_prompt, **_kw):
+            output_path.write_bytes(b"fake-jpg")
+            return output_path
+
+        monkeypatch.setattr(
+            "sentryblur.pipeline.generate_preview_nl", _fake_preview,
+        )
+
+        inp = tmp_path / "clip.mp4"
+        _make_test_video(inp, frames=8, size=(64, 64))
+
+        result = CliRunner().invoke(
+            cli, ["prompt", str(inp), "phone screen", "--preview"],
+        )
+        assert result.exit_code == 0, result.output
+        assert check_calls == [], (
+            f"check_clip_length_for_prompt was called in --preview mode: "
+            f"{check_calls!r}"
+        )
+
 
 class TestPromptLastFlag:
     """--last support on the prompt subcommand. Mirrors TestLastFlag's

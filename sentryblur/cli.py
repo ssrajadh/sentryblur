@@ -446,9 +446,8 @@ def prompt(input_path: str | None, text_prompt: str | None,
         )
         raise SystemExit(1)
 
-    check_clip_length_for_prompt(input_path, auto_confirm=yes)
-
     if not preview:
+        check_clip_length_for_prompt(input_path, auto_confirm=yes)
         _check_ffmpeg()
     if output_path is None:
         output_path = (
