@@ -74,9 +74,11 @@ def test_temporal_window_fills_single_frame_dropout(tmp_path: Path):
     out_no_smooth = tmp_path / "no_smooth.mp4"
 
     blur_video(inp, out_smooth, _DropoutOnFrameFive(),
-               dilation_px=0, temporal_window=3, blur_strength=51)
+               dilation_px=0, temporal_window=3,
+               blur_mode="gaussian", blur_strength=51)
     blur_video(inp, out_no_smooth, _DropoutOnFrameFive(),
-               dilation_px=0, temporal_window=0, blur_strength=51)
+               dilation_px=0, temporal_window=0,
+               blur_mode="gaussian", blur_strength=51)
 
     f5_smooth = _read_frame(out_smooth, 5).astype(np.int16)
     f5_no = _read_frame(out_no_smooth, 5).astype(np.int16)
@@ -114,9 +116,11 @@ def test_dilation_expands_mask_beyond_box(tmp_path: Path):
     out_dil = tmp_path / "dil.mp4"
 
     blur_video(inp, out_no_dil, _AlwaysDetect(),
-               dilation_px=0, temporal_window=0, blur_strength=21)
+               dilation_px=0, temporal_window=0,
+               blur_mode="gaussian", blur_strength=21)
     blur_video(inp, out_dil, _AlwaysDetect(),
-               dilation_px=10, temporal_window=0, blur_strength=21)
+               dilation_px=10, temporal_window=0,
+               blur_mode="gaussian", blur_strength=21)
 
     f0_no = _read_frame(out_no_dil, 0).astype(np.int16)
     f0_dil = _read_frame(out_dil, 0).astype(np.int16)
