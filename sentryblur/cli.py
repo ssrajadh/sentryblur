@@ -354,9 +354,12 @@ def plates(input_path: Path | None, output_path: Path | None,
 
 
 _PROMPT_INSTALL_HINT = (
-    "Install with:\n"
-    "  uv tool install '.[prompt]'\n"
-    "  pip install git+https://github.com/facebookresearch/sam2.git"
+    "Install with one of:\n"
+    "  uv tool install '.[prompt]' --with git+https://github.com/facebookresearch/sam2.git\n"
+    "  pip install 'sentryblur[prompt]' git+https://github.com/facebookresearch/sam2.git\n"
+    "Note: a bare `pip install` after `uv tool install` writes to the wrong "
+    "Python and sam2 won't be visible to sentryblur — install both into the "
+    "same environment in one command."
 )
 
 

@@ -26,7 +26,9 @@ class MissingPlatesExtra(ImportError):
     def __init__(self) -> None:
         super().__init__(
             "License plate detection requires the [plates] extra.\n"
-            "Install with: pip install 'sentryblur[plates]'"
+            "Install with one of:\n"
+            "  uv tool install '.[plates]'                  # if installed via uv tool\n"
+            "  pip install 'sentryblur[plates]'             # if installed via pip"
         )
 
 

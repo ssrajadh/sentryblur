@@ -4,8 +4,9 @@ Local, offline object redaction for video, with one command.
 
 [https://github.com/user-attachments/assets/87710fbb-8d63-44ea-b011-5fc9b46512c0](https://github.com/user-attachments/assets/6af8f234-63e2-42e5-b896-e8f24c8f3ee8)
 
+> **Note**
+> The demo above is sped up. Actual runtime depends on hardware, the clip was processed on an M1 Pro MBP (16 GB RAM); expect faster results on better hardware. See the [Performance](#performance) table for details.  
 
-## Quickstart
 
 ## Getting Started
 
@@ -25,17 +26,21 @@ powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```bash
 git clone https://github.com/ssrajadh/sentryblur.git
 cd sentryblur
-uv tool install .                                      # base: faces only
-uv tool install '.[plates]'                            # add license plate detection
-uv tool install '.[prompt]'                            # natural-language redaction
-pip install git+https://github.com/facebookresearch/sam2.git
+
+# Faces only (base)
+uv tool install .
+
+# Or, all detectors (faces + plates + natural-language prompt) in one command:
+uv tool install '.[plates,prompt]' --with git+https://github.com/facebookresearch/sam2.git
 ```
+
+`uv tool install` re-resolves on each invocation rather than merging, so multiple sequential installs would silently drop earlier extras. Use a single command with all the extras you want, plus `--with` for SAM 2 (which isn't on PyPI). To upgrade later, re-run the same command.
 
 3. Run
 ```bash
 sentryblur faces  video.mp4                          # → video_blurred.mp4
 sentryblur plates video.mp4                          # → video_blurred.mp4
-sentryblur prompt video.mp4 "license plate"          # → video_blurred.mp4
+sentryblur prompt video.mp4 "road signs"          # → video_blurred.mp4
 sentryblur faces  video.mp4 --preview                # → video_preview.jpg (3x3 contact sheet)
 sentryblur prompt video.mp4 "phone screen" --preview
 ```
@@ -50,21 +55,23 @@ sentryblur prompt video.mp4 "phone screen" --preview
 
 ## Install
 
-From a local clone:
+From a local clone. Pick one — `uv tool install` re-resolves on each invocation, so running multiple installs sequentially will drop earlier extras. Always pass every extra you want in a single command.
 
 ```bash
-uv tool install .                         # faces only (~50 MB of deps)
-uv tool install '.[plates]'               # adds open-image-models for plates
+# Faces only (~50 MB of deps)
+uv tool install .
+
+# Faces + plates
+uv tool install '.[plates]'
+
+# Faces + plates + prompt (natural-language redaction).
+# SAM 2 is not on PyPI, so pass it via --with so it lands in the same uv-managed
+# venv as sentryblur itself. A bare `pip install git+...sam2.git` writes to
+# whatever Python is first on your PATH and won't be visible to `sentryblur`.
+uv tool install '.[plates,prompt]' --with git+https://github.com/facebookresearch/sam2.git
 ```
 
-For natural-language prompted redaction (`sentryblur prompt`):
-
-```bash
-uv tool install '.[prompt]'
-pip install git+https://github.com/facebookresearch/sam2.git
-```
-
-Hardware: `prompt` requires an NVIDIA GPU or Apple Silicon (16 GB+ unified memory). CPU is not supported. SAM 2 is installed separately because it is not on PyPI.
+Hardware: `prompt` requires an NVIDIA GPU or Apple Silicon (16 GB+ unified memory). CPU is not supported.
 
 To upgrade after pulling new commits, re-run the same command.
 
