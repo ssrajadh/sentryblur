@@ -243,7 +243,3 @@ This section is honest, not aspirational. Read it before trusting SentryBlur wit
 - **[ffmpeg](https://ffmpeg.org/)** — frame extraction and video reassembly.
 - **[Grounding DINO](https://github.com/IDEA-Research/GroundingDINO)** — IDEA-Research, accessed via HuggingFace `transformers` (`IDEA-Research/grounding-dino-tiny`).
 - **[SAM 2](https://github.com/facebookresearch/sam2)** — Meta AI Research.
-
-## License
-
-MIT.
