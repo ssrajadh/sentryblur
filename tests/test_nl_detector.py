@@ -25,8 +25,8 @@ class _NullCtx:
 
 @pytest.fixture
 def _fake_heavy_modules(monkeypatch):
-    """Stub torch / transformers / sam2.build_sam in sys.modules so
-    NLDetector can be imported and instantiated without the real deps."""
+    """Stub torch / transformers in sys.modules so NLDetector can be
+    imported and instantiated without the real deps."""
     fake_torch = SimpleNamespace(
         cuda=SimpleNamespace(is_available=lambda: False),
         backends=SimpleNamespace(
@@ -37,27 +37,20 @@ def _fake_heavy_modules(monkeypatch):
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
 
     fake_transformers = SimpleNamespace(
-        AutoModelForZeroShotObjectDetection=MagicMock(),
-        AutoProcessor=MagicMock(),
+        Sam3VideoModel=MagicMock(),
+        Sam3VideoProcessor=MagicMock(),
     )
     monkeypatch.setitem(sys.modules, "transformers", fake_transformers)
-
-    monkeypatch.setitem(sys.modules, "sam2", SimpleNamespace())
-    monkeypatch.setitem(
-        sys.modules, "sam2.build_sam",
-        SimpleNamespace(build_sam2_video_predictor=MagicMock()),
-    )
     return fake_torch, fake_transformers
 
 
 def test_init_does_not_load_models(_fake_heavy_modules):
     from sentryblur.nl_detector import NLDetector
     det = NLDetector("a red car")
-    assert det._dino_processor is None
-    assert det._dino_model is None
-    assert det._sam_predictor is None
-    # Prompt is normalized: stripped + period suffix.
-    assert det._text_prompt == "a red car."
+    assert det._model is None
+    assert det._processor is None
+    # Prompt is stripped; SAM 3 takes plain noun phrases (no trailing period).
+    assert det._text_prompt == "a red car"
     assert det._device == "cpu"  # fake torch has no cuda/mps
 
 
@@ -69,7 +62,7 @@ def test_init_rejects_empty_prompt(_fake_heavy_modules):
         NLDetector("   ")
 
 
-def test_process_video_raises_on_empty_dino_detection(
+def test_process_video_raises_when_sam3_finds_nothing(
     tmp_path, monkeypatch, _fake_heavy_modules,
 ):
     import cv2
@@ -79,9 +72,11 @@ def test_process_video_raises_on_empty_dino_detection(
     cv2.imwrite(str(tmp_path / "00001.jpg"), frame)
 
     det = NLDetector("nonexistent thing")
+    # Bypass model load and stub the session iterator to yield no detections.
+    monkeypatch.setattr(det, "_ensure_model", lambda: None)
     monkeypatch.setattr(
-        det, "detect_boxes",
-        lambda _f: np.empty((0, 5), dtype=np.float32),
+        det, "_run_session",
+        lambda frames: iter([(0, {"masks": None})]),
     )
 
     with pytest.raises(NLDetectionFailure) as exc:
@@ -98,7 +93,7 @@ def test_process_video_raises_on_empty_dir(tmp_path, _fake_heavy_modules):
 
 @pytest.mark.gpu
 def test_end_to_end_real_models(tmp_path):
-    """Real DINO + SAM 2 on a tiny clip. Skipped without GPU/MPS."""
+    """Real SAM 3.1 on a tiny clip. Skipped without GPU/MPS."""
     pytest.skip("Requires CUDA or MPS hardware; not run in CI")
 
 

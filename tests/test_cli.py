@@ -403,7 +403,7 @@ class TestPromptCommand:
 
         result = CliRunner().invoke(cli, ["prompt", str(inp), "unicorn"])
         assert result.exit_code == 1
-        assert "Could not find 'unicorn' in the first frame" in result.output
+        assert "Could not find 'unicorn' anywhere in the clip" in result.output
         assert "more specific or different prompt" in result.output
         assert "Traceback" not in result.output
 
@@ -444,7 +444,7 @@ class TestPromptCommand:
         assert (tmp_path / "clip_preview.jpg").exists()
 
     def test_preview_skips_duration_check(self, tmp_path, monkeypatch):
-        """--preview only runs DINO on 9 keyframes (no SAM 2 propagation), so
+        """--preview only runs SAM 3 on 9 keyframes (no full propagation), so
         runtime is ~constant in clip length. The duration confirmation prompt
         — calibrated for full propagation — must not fire in preview mode.
         Regression test: previously check_clip_length_for_prompt ran

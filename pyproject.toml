@@ -19,8 +19,9 @@ plates = [
 ]
 prompt = [
     "torch>=2.4",
-    "transformers>=4.45",
+    "transformers>=4.57",
     "accelerate",
+    "pillow",
 ]
 
 [project.scripts]

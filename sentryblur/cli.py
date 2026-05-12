@@ -355,11 +355,10 @@ def plates(input_path: Path | None, output_path: Path | None,
 
 _PROMPT_INSTALL_HINT = (
     "Install with one of:\n"
-    "  uv tool install '.[prompt]' --with git+https://github.com/facebookresearch/sam2.git\n"
-    "  pip install 'sentryblur[prompt]' git+https://github.com/facebookresearch/sam2.git\n"
-    "Note: a bare `pip install` after `uv tool install` writes to the wrong "
-    "Python and sam2 won't be visible to sentryblur — install both into the "
-    "same environment in one command."
+    "  uv tool install '.[prompt]'\n"
+    "  pip install 'sentryblur[prompt]'\n"
+    "First use also requires accepting Meta's SAM License at "
+    "https://huggingface.co/facebook/sam3 and running `huggingface-cli login`."
 )
 
 
@@ -374,13 +373,13 @@ _PROMPT_INSTALL_HINT = (
               help="Output path (default: <input>_blurred.<ext>, "
                    "or <input>_preview.jpg with --preview).")
 @click.option("--preview", is_flag=True,
-              help="Render a 3x3 contact sheet of DINO detections instead "
-                   "of running the full SAM 2 propagation. Fast — useful "
-                   "for sanity-checking the prompt before committing.")
+              help="Render a 3x3 contact sheet of SAM 3 detections instead "
+                   "of running the full video propagation. Useful for "
+                   "sanity-checking the prompt before committing.")
 @click.option("-y", "--yes", is_flag=True,
               help="Skip the --last and duration confirmation prompts.")
 @click.option("--dilation", default=15, show_default=True, type=int,
-              help="Pixels to dilate the SAM 2 mask. Larger = safer margin.")
+              help="Pixels to dilate the SAM 3 mask. Larger = safer margin.")
 @click.option("--window", default=3, show_default=True, type=int,
               help="Temporal smoothing window (frames).")
 @click.option("--blur-mode", default="pixelate", show_default=True,
@@ -399,9 +398,9 @@ def prompt(input_path: str | None, text_prompt: str | None,
     """Redact arbitrary objects via natural language description.
 
     \b
-    Uses Grounding DINO + SAM 2 for zero-shot promptable video segmentation.
-    Slower than 'faces' or 'plates' (~25x realtime on Apple M1 Pro).
-    Best for one-off tasks rather than batch processing.
+    Uses SAM 3.1 for zero-shot text-promptable video segmentation.
+    Slower than 'faces' or 'plates'. Best for one-off tasks rather than
+    batch processing.
 
     \b
     Examples:
@@ -510,7 +509,7 @@ def prompt(input_path: str | None, text_prompt: str | None,
         _open_file(str(result.output_path))
     except NLDetectionFailure:
         click.secho(
-            f"Error: Could not find {text_prompt!r} in the first frame. "
+            f"Error: Could not find {text_prompt!r} anywhere in the clip. "
             "Try a more specific or different prompt.",
             fg="red", err=True,
         )

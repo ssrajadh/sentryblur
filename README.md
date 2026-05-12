@@ -31,10 +31,12 @@ cd sentryblur
 uv tool install .
 
 # Or, all detectors (faces + plates + natural-language prompt) in one command:
-uv tool install '.[plates,prompt]' --with git+https://github.com/facebookresearch/sam2.git
+uv tool install '.[plates,prompt]'
 ```
 
-`uv tool install` re-resolves on each invocation rather than merging, so multiple sequential installs would silently drop earlier extras. Use a single command with all the extras you want, plus `--with` for SAM 2 (which isn't on PyPI). To upgrade later, re-run the same command.
+`uv tool install` re-resolves on each invocation rather than merging, so multiple sequential installs would silently drop earlier extras. Use a single command with all the extras you want. To upgrade later, re-run the same command.
+
+The `prompt` feature downloads SAM 3.1 weights from Hugging Face on first run. The weights are gated: visit [facebook/sam3](https://huggingface.co/facebook/sam3), accept Meta's SAM License, then run `huggingface-cli login` once with a token that has read access.
 
 3. Run
 ```bash
@@ -65,13 +67,12 @@ uv tool install .
 uv tool install '.[plates]'
 
 # Faces + plates + prompt (natural-language redaction).
-# SAM 2 is not on PyPI, so pass it via --with so it lands in the same uv-managed
-# venv as sentryblur itself. A bare `pip install git+...sam2.git` writes to
-# whatever Python is first on your PATH and won't be visible to `sentryblur`.
-uv tool install '.[plates,prompt]' --with git+https://github.com/facebookresearch/sam2.git
+uv tool install '.[plates,prompt]'
 ```
 
 Hardware: `prompt` requires an NVIDIA GPU or Apple Silicon (16 GB+ unified memory). CPU is not supported.
+
+`prompt` also requires accepting Meta's SAM License on the [SAM 3 model page](https://huggingface.co/facebook/sam3) and running `huggingface-cli login` once — the SAM 3.1 weights are gated. The faces and plates paths do not need this.
 
 To upgrade after pulling new commits, re-run the same command.
 
@@ -94,6 +95,7 @@ First run of each detector downloads weights:
 |---|---|---|
 | SCRFD (faces) | ~16 MB | `~/.insightface/` |
 | YOLOv9-T (plates) | ~5 MB | `~/.cache/sentryblur/` |
+| SAM 3.1 (prompt) | ~3.5 GB | `~/.cache/sentryblur/huggingface/` |
 
 ## Usage
 
@@ -121,7 +123,7 @@ Done. 720 frames, coverage 84.2%, 22.7s (0.8x realtime)
 
 ### Prompt
 
-Natural-language redaction for objects outside the closed faces/plates vocabulary — phone screens, monitors, name tags, specific people. Grounding DINO finds the target boxes from your text prompt on frame 0; SAM 2's video predictor then propagates pixel-precise masks across every frame.
+Natural-language redaction for objects outside the closed faces/plates vocabulary — phone screens, monitors, name tags, specific people. SAM 3.1 takes the text prompt and produces tracked pixel-precise masks across the full clip in a single pass. Targets can first appear at any point in the video — there is no frame-0 dependency.
 
 ```bash
 $ sentryblur prompt video.mp4 "license plate"
@@ -132,7 +134,7 @@ Done. 900 frames, coverage 18.6%, 758.4s (25.3x realtime)
 Output: /home/user/video_blurred.mp4
 ```
 
-`--preview` skips SAM 2 entirely and only runs DINO on 9 keyframes — fast (~5s after model load) and gives you a contact sheet to verify the prompt before committing to the full propagation:
+`--preview` skips the cross-frame propagation and runs SAM 3 on 9 keyframes independently — gives you a contact sheet to verify the prompt before committing to the full video run:
 
 ```bash
 $ sentryblur prompt video.mp4 "phone screen" --preview
@@ -157,7 +159,7 @@ Pass `-y/--yes` to skip both the `--last` and duration confirmation prompts (use
 
 #### Performance
 
-`prompt` is dominated by per-frame inference (Grounding DINO + SAM 2 video propagation), so processing time scales with frame count, not just clip duration. A 60 fps clip takes roughly 2x longer than a 30 fps clip of the same duration.
+`prompt` is dominated by per-frame SAM 3.1 inference, so processing time scales with frame count, not just clip duration. A 60 fps clip takes roughly 2x longer than a 30 fps clip of the same duration.
 
 On Apple M1 Pro / M1 Max (validated): a 10-second 30 fps clip (300 frames) processes in approximately 4 minutes.
 
@@ -215,7 +217,7 @@ Open the JPG, verify the boxes land where you expect, then re-run without `--pre
 
 **4. Redact and reassemble.** The masked region of each frame is replaced — by default with a pixel mosaic (`--pixel-size`), or with a Gaussian blur (`--blur-strength`) if `--blur-mode gaussian`. Pixelation is the default because Gaussian blur on small targets (faces in dashcams are often 30–60 px) tends to collapse to a flat blob that looks weak; a mosaic preserves the visual signal "this region is redacted." The unmasked region is kept untouched, and ffmpeg reassembles to H.264 at CRF 18. The output is written atomically — to a tempfile, then `mv`'d into place — so a crash mid-render never overwrites your intended output with a half-finished file.
 
-**`prompt`.** Grounding DINO runs on frame 0 with the user's text prompt, producing bounding boxes. The boxes are fed to SAM 2's video predictor, which propagates pixel-precise masks across all frames using its built-in tracking. Masks then go through the same dilation and temporal smoothing as `faces`/`plates` before blur and reassembly. SAM 2 is invoked once per video (not per frame) and uses CPU offload for the video and state buffers — without these flags, MPS unified memory is exceeded on clips longer than ~20 seconds.
+**`prompt`.** SAM 3.1 takes the user's text prompt and the full clip, then runs its unified detector + tracker to produce pixel-precise masks across every frame in a single session. The detector and tracker share a backbone, and the tracker carries identity across frames so a target that first appears mid-clip still gets a stable mask. Frames are stored on CPU and streamed to GPU/MPS so 16 GB unified-memory Macs can handle multi-minute clips. Masks then go through the same dilation and temporal smoothing as `faces`/`plates` before blur and reassembly.
 
 ## Limitations
 
@@ -228,22 +230,22 @@ This section is honest, not aspirational. Read it before trusting SentryBlur wit
 
 ### `prompt`-specific
 
-- **Frame-0 dependency.** `prompt` depends on Grounding DINO finding the target in the first frame of the clip. If the target is occluded, off-screen, or too small/distant in frame 0, the run fails immediately with `Could not find <prompt>`. Use a clip where the target is visible at the start, or trim with `ffmpeg` first.
+- **Gated weights.** SAM 3.1 weights are gated on Hugging Face. First use requires accepting Meta's SAM License on the [model page](https://huggingface.co/facebook/sam3) and running `huggingface-cli login`. Without this, the first run fails with a 401 from Hugging Face.
 - **GPU/Apple Silicon only.** `prompt` requires CUDA or MPS. CPU is rejected up front. `faces` and `plates` still run on CPU.
 - **Slow.** `prompt` is one to two orders of magnitude slower than `faces`/`plates` (see the [Performance](#performance) table). Suitable for one-off tasks, not batch workflows.
+- **MPS quirks.** SAM 3 Video on Apple Silicon depends on a recent `transformers` (≥ 4.57) that has the `pin_memory()` fix for MPS. If you hit `RuntimeError: Attempted to set the storage of a tensor on device "cpu" to a storage on different device "mps:0"`, upgrade transformers.
 
 ## Roadmap
 
-- **Faster `prompt` mode.** Per-N-frame DINO detection plus a lightweight tracker between detections, instead of full SAM 2 propagation on every frame. Should bring `prompt` closer to `faces`/`plates` throughput on long clips.
+- **Faster `prompt` mode.** Sub-sampled SAM 3 detection plus a lightweight tracker between keyframes, instead of full per-frame propagation. Should bring `prompt` closer to `faces`/`plates` throughput on long clips.
 
 ## Acknowledgments
 
 - **[insightface](https://github.com/deepinsight/insightface)** — SCRFD face detector.
 - **[open-image-models](https://github.com/ankandrew/open-image-models)** — MIT-licensed YOLOv9-T license plate detector by ankandrew. Chosen specifically because the weights are MIT-licensed (most YOLOv8 plate weights on HuggingFace inherit Ultralytics's AGPL).
 - **[ffmpeg](https://ffmpeg.org/)** — frame extraction and video reassembly.
-- **[Grounding DINO](https://github.com/IDEA-Research/GroundingDINO)** — IDEA-Research, accessed via HuggingFace `transformers` (`IDEA-Research/grounding-dino-tiny`).
-- **[SAM 2](https://github.com/facebookresearch/sam2)** — Meta AI Research.
+- **[SAM 3](https://github.com/facebookresearch/sam3)** — Meta AI Research, accessed via HuggingFace `transformers` (`facebook/sam3`).
 
 ## License
 
-MIT.
+This project's code is MIT. The SAM 3.1 weights downloaded by the `prompt` feature are released by Meta under the custom [SAM License](https://github.com/facebookresearch/sam3/blob/main/LICENSE) (broad commercial use with restrictions around weapons, military, and similar applications) — review it before redistributing the weights or building a product on top.

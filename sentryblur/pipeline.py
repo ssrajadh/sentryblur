@@ -329,7 +329,7 @@ def blur_video_nl(
     blur_strength: int = 51,
     verbose: bool = False,
 ) -> BlurResult:
-    """Mirror of blur_video() that uses NLDetector. SAM 2 already returns
+    """Mirror of blur_video() that uses NLDetector. SAM 3 already returns
     pixel-precise masks per frame, so this skips the box->mask conversion
     that blur_video does. Dilation, temporal smoothing, and blur application
     are identical."""
@@ -414,10 +414,10 @@ def generate_preview_nl(
     *,
     max_width: int = 1920,
 ) -> Path:
-    """3x3 contact sheet of DINO detections per keyframe — SAM 2 is not
-    invoked, so this is fast (~5s on Apple Silicon for DINO load + 9
-    inferences). Use to sanity-check the prompt before committing to a
-    full SAM 2 propagation."""
+    """3x3 contact sheet of SAM 3 detections per keyframe — runs the model
+    on each keyframe as a 1-frame session, skipping the cross-frame
+    tracking that the full propagation needs. Use to sanity-check the
+    prompt before committing to a full video run."""
     input_path = Path(input_path).resolve()
     output_path = Path(output_path).resolve()
     if not input_path.exists():
