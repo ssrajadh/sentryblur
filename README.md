@@ -244,8 +244,4 @@ This section is honest, not aspirational. Read it before trusting SentryBlur wit
 - **[insightface](https://github.com/deepinsight/insightface)** — SCRFD face detector.
 - **[open-image-models](https://github.com/ankandrew/open-image-models)** — MIT-licensed YOLOv9-T license plate detector by ankandrew. Chosen specifically because the weights are MIT-licensed (most YOLOv8 plate weights on HuggingFace inherit Ultralytics's AGPL).
 - **[ffmpeg](https://ffmpeg.org/)** — frame extraction and video reassembly.
-- **[SAM 3](https://github.com/facebookresearch/sam3)** — Meta AI Research, accessed via HuggingFace `transformers` (`facebook/sam3`).
-
-## License
-
-This project's code is MIT. The SAM 3.1 weights downloaded by the `prompt` feature are released by Meta under the custom [SAM License](https://github.com/facebookresearch/sam3/blob/main/LICENSE) (broad commercial use with restrictions around weapons, military, and similar applications) — review it before redistributing the weights or building a product on top.
+- **[SAM 3](https://github.com/facebookresearch/sam3)** — Meta AI Research, accessed via HuggingFace `transformers` (`facebook/sam3`). Weights are released under Meta's custom [SAM License](https://github.com/facebookresearch/sam3/blob/main/LICENSE); this project's own code is Apache 2.0 (see `LICENSE`).
