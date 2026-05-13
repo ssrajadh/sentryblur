@@ -97,6 +97,42 @@ def test_end_to_end_real_models(tmp_path):
     pytest.skip("Requires CUDA or MPS hardware; not run in CI")
 
 
+# ---------- factory + SAM 2 fallback backend ----------
+
+
+def test_make_nl_detector_sam3_returns_sam3_class(_fake_heavy_modules):
+    from sentryblur.nl_detector import NLDetector, make_nl_detector
+    det = make_nl_detector("a thing", backend="sam3")
+    assert isinstance(det, NLDetector)
+
+
+def test_make_nl_detector_unknown_backend(_fake_heavy_modules):
+    from sentryblur.nl_detector import make_nl_detector
+    with pytest.raises(ValueError, match="unknown backend"):
+        make_nl_detector("a thing", backend="sam9000")
+
+
+def test_make_nl_detector_sam2_returns_sam2_class(monkeypatch, _fake_heavy_modules):
+    # SAM 2 backend imports sam2.build_sam at construction; stub it so the
+    # factory can be exercised without the real git install.
+    monkeypatch.setitem(sys.modules, "sam2", SimpleNamespace())
+    monkeypatch.setitem(
+        sys.modules, "sam2.build_sam",
+        SimpleNamespace(build_sam2_video_predictor=MagicMock()),
+    )
+    # SAM 2 path also needs the transformers DINO classes — stub those.
+    fake_transformers = sys.modules["transformers"]
+    fake_transformers.AutoModelForZeroShotObjectDetection = MagicMock()
+    fake_transformers.AutoProcessor = MagicMock()
+
+    from sentryblur.nl_detector import make_nl_detector
+    from sentryblur.nl_detector_sam2 import NLDetectorSam2
+    det = make_nl_detector("a thing", backend="sam2")
+    assert isinstance(det, NLDetectorSam2)
+    # SAM 2 path normalizes the prompt with a trailing period; SAM 3 doesn't.
+    assert det._text_prompt == "a thing."
+
+
 # ---------- pipeline.blur_video_nl ----------
 
 

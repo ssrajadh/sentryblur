@@ -32,11 +32,14 @@ uv tool install .
 
 # Or, all detectors (faces + plates + natural-language prompt) in one command:
 uv tool install '.[plates,prompt]'
+
+# Optional: also include the legacy SAM 2 backend as a fallback (see below):
+uv tool install '.[plates,prompt]' --with git+https://github.com/facebookresearch/sam2.git
 ```
 
 `uv tool install` re-resolves on each invocation rather than merging, so multiple sequential installs would silently drop earlier extras. Use a single command with all the extras you want. To upgrade later, re-run the same command.
 
-The `prompt` feature downloads SAM 3.1 weights from Hugging Face on first run. The weights are gated: visit [facebook/sam3](https://huggingface.co/facebook/sam3), accept Meta's SAM License, then run `huggingface-cli login` once with a token that has read access.
+The `prompt` feature uses SAM 3.1 by default, which downloads weights from Hugging Face on first run. The weights are gated: visit [facebook/sam3](https://huggingface.co/facebook/sam3), accept Meta's SAM License, then run `huggingface-cli login` once with a token that has read access. If you can't get access (approval can take hours to days) or don't want to gate yourself on a HuggingFace account, install with the SAM 2 `--with` line above and pass `--backend sam2` to `sentryblur prompt`.
 
 3. Run
 ```bash
@@ -66,13 +69,18 @@ uv tool install .
 # Faces + plates
 uv tool install '.[plates]'
 
-# Faces + plates + prompt (natural-language redaction).
+# Faces + plates + prompt (SAM 3.1 backend, default).
 uv tool install '.[plates,prompt]'
+
+# Add the legacy SAM 2 + DINO backend as a fallback (sam2 is not on PyPI,
+# so it has to come via --with so it lands in the same uv-managed venv
+# as sentryblur itself):
+uv tool install '.[plates,prompt]' --with git+https://github.com/facebookresearch/sam2.git
 ```
 
 Hardware: `prompt` requires an NVIDIA GPU or Apple Silicon (16 GB+ unified memory). CPU is not supported.
 
-`prompt` also requires accepting Meta's SAM License on the [SAM 3 model page](https://huggingface.co/facebook/sam3) and running `huggingface-cli login` once — the SAM 3.1 weights are gated. The faces and plates paths do not need this.
+The default SAM 3.1 backend requires accepting Meta's SAM License on the [SAM 3 model page](https://huggingface.co/facebook/sam3) and running `huggingface-cli login` once — the weights are gated. The faces and plates paths do not need this. If approval is taking too long or you'd rather skip the HF account, install with the SAM 2 `--with` line and use `sentryblur prompt --backend sam2`.
 
 To upgrade after pulling new commits, re-run the same command.
 
@@ -123,7 +131,7 @@ Done. 720 frames, coverage 84.2%, 22.7s (0.8x realtime)
 
 ### Prompt
 
-Natural-language redaction for objects outside the closed faces/plates vocabulary — phone screens, monitors, name tags, specific people. SAM 3.1 takes the text prompt and produces tracked pixel-precise masks across the full clip in a single pass. Targets can first appear at any point in the video — there is no frame-0 dependency.
+Natural-language redaction for objects outside the closed faces/plates vocabulary — phone screens, monitors, name tags, specific people. SAM 3.1 (default) takes the text prompt and produces tracked pixel-precise masks across the full clip in a single pass; targets can first appear at any point in the video — there is no frame-0 dependency. Pass `--backend sam2` to fall back to the legacy Grounding DINO + SAM 2 path if you can't access the gated SAM 3 weights.
 
 ```bash
 $ sentryblur prompt video.mp4 "license plate"
@@ -230,7 +238,8 @@ This section is honest, not aspirational. Read it before trusting SentryBlur wit
 
 ### `prompt`-specific
 
-- **Gated weights.** SAM 3.1 weights are gated on Hugging Face. First use requires accepting Meta's SAM License on the [model page](https://huggingface.co/facebook/sam3) and running `huggingface-cli login`. Without this, the first run fails with a 401 from Hugging Face.
+- **Gated SAM 3.1 weights.** The default `--backend sam3` path uses gated weights on Hugging Face. First use requires accepting Meta's SAM License on the [model page](https://huggingface.co/facebook/sam3) and running `huggingface-cli login`. Without this, the first run fails with a 401 and `sentryblur` will tell you to fix auth or pass `--backend sam2`. Approval can take from minutes to a day or more — the SAM 2 backend is the workaround in the meantime.
+- **SAM 2 backend tradeoffs (`--backend sam2`).** No HF gating, but: (a) requires the `--with git+...sam2.git` install line, (b) only finds targets visible in *frame 0* of the clip — if the target enters mid-clip, SAM 2 misses it, and (c) less accurate on hard prompts than SAM 3.1 in our testing.
 - **GPU/Apple Silicon only.** `prompt` requires CUDA or MPS. CPU is rejected up front. `faces` and `plates` still run on CPU.
 - **Slow.** `prompt` is one to two orders of magnitude slower than `faces`/`plates` (see the [Performance](#performance) table). Suitable for one-off tasks, not batch workflows.
 - **MPS quirks.** SAM 3 Video on Apple Silicon depends on a recent `transformers` (≥ 4.57) that has the `pin_memory()` fix for MPS. If you hit `RuntimeError: Attempted to set the storage of a tensor on device "cpu" to a storage on different device "mps:0"`, upgrade transformers.

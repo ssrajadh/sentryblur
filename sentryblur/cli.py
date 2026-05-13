@@ -353,12 +353,36 @@ def plates(input_path: Path | None, output_path: Path | None,
     )
 
 
+def _looks_like_hf_gating_error(e: BaseException) -> bool:
+    """Best-effort detection of Hugging Face gated-repo failures so we can
+    point users at `--backend sam2`. Checks the exception type name (to
+    catch huggingface_hub.errors.GatedRepoError without importing it) and
+    common message substrings from 401/403 responses."""
+    type_name = type(e).__name__
+    if "Gated" in type_name or type_name == "OfflineModeIsEnabled":
+        return True
+    msg = str(e).lower()
+    needles = (
+        "gated repo",
+        "access to model facebook/sam3",
+        "401 client error",
+        "403 client error",
+        "you must be authenticated",
+        "you are trying to access a gated",
+    )
+    return any(n in msg for n in needles)
+
+
 _PROMPT_INSTALL_HINT = (
-    "Install with one of:\n"
+    "Install (SAM 3.1 backend, default) with one of:\n"
     "  uv tool install '.[prompt]'\n"
     "  pip install 'sentryblur[prompt]'\n"
-    "First use also requires accepting Meta's SAM License at "
-    "https://huggingface.co/facebook/sam3 and running `huggingface-cli login`."
+    "First use of the SAM 3.1 backend also requires accepting Meta's SAM\n"
+    "License at https://huggingface.co/facebook/sam3 and running\n"
+    "`huggingface-cli login`.\n\n"
+    "If you can't access the gated weights, add the legacy SAM 2 + DINO\n"
+    "backend with `--with git+https://github.com/facebookresearch/sam2.git`\n"
+    "and select it via `--backend sam2`."
 )
 
 
@@ -373,13 +397,20 @@ _PROMPT_INSTALL_HINT = (
               help="Output path (default: <input>_blurred.<ext>, "
                    "or <input>_preview.jpg with --preview).")
 @click.option("--preview", is_flag=True,
-              help="Render a 3x3 contact sheet of SAM 3 detections instead "
-                   "of running the full video propagation. Useful for "
+              help="Render a 3x3 contact sheet of detections instead of "
+                   "running the full video propagation. Useful for "
                    "sanity-checking the prompt before committing.")
+@click.option("--backend", default="sam3", show_default=True,
+              type=click.Choice(["sam3", "sam2"]),
+              help="Detection backend. sam3 (default) uses SAM 3.1 — "
+                   "requires accepting Meta's SAM License on Hugging Face. "
+                   "sam2 uses the legacy Grounding DINO + SAM 2 path — no "
+                   "gating, but requires `--with git+...sam2.git` at install "
+                   "time and has a frame-0 dependency.")
 @click.option("-y", "--yes", is_flag=True,
               help="Skip the --last and duration confirmation prompts.")
 @click.option("--dilation", default=15, show_default=True, type=int,
-              help="Pixels to dilate the SAM 3 mask. Larger = safer margin.")
+              help="Pixels to dilate the mask. Larger = safer margin.")
 @click.option("--window", default=3, show_default=True, type=int,
               help="Temporal smoothing window (frames).")
 @click.option("--blur-mode", default="pixelate", show_default=True,
@@ -393,12 +424,14 @@ _PROMPT_INSTALL_HINT = (
               help="Print progress and timing info to stderr.")
 def prompt(input_path: str | None, text_prompt: str | None,
            use_last: bool, output_path: Path | None,
-           preview: bool, yes: bool, dilation: int, window: int,
+           preview: bool, backend: str, yes: bool, dilation: int, window: int,
            blur_mode: str, pixel_size: int, blur_strength: int, verbose: bool):
     """Redact arbitrary objects via natural language description.
 
     \b
-    Uses SAM 3.1 for zero-shot text-promptable video segmentation.
+    Uses SAM 3.1 by default for zero-shot text-promptable video
+    segmentation. Pass `--backend sam2` for the legacy Grounding DINO +
+    SAM 2 path if you can't access the gated SAM 3 weights on Hugging Face.
     Slower than 'faces' or 'plates'. Best for one-off tasks rather than
     batch processing.
 
@@ -478,7 +511,7 @@ def prompt(input_path: str | None, text_prompt: str | None,
         if preview:
             click.echo(f"Rendering preview {input_path.name} -> {output_path.name}")
             preview_path = generate_preview_nl(
-                input_path, output_path, text_prompt,
+                input_path, output_path, text_prompt, backend=backend,
             )
             click.secho(
                 f"Preview saved to {preview_path}. Review detections, then "
@@ -491,7 +524,7 @@ def prompt(input_path: str | None, text_prompt: str | None,
         click.echo(f"Blurring {input_path.name} -> {output_path.name}")
         t0 = time.time()
         result = blur_video_nl(
-            input_path, output_path, text_prompt,
+            input_path, output_path, text_prompt, backend=backend,
             dilation_px=dilation, temporal_window=window,
             blur_mode=blur_mode, pixel_size=pixel_size,
             blur_strength=blur_strength, verbose=verbose,
@@ -521,7 +554,21 @@ def prompt(input_path: str | None, text_prompt: str | None,
             fg="red", err=True,
         )
         raise SystemExit(1)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
+        if backend == "sam3" and _looks_like_hf_gating_error(e):
+            click.secho(
+                "Error: SAM 3.1 weights are gated and this machine doesn't "
+                "have access yet.\n\n"
+                "Either (a) accept Meta's SAM License at "
+                "https://huggingface.co/facebook/sam3 and run "
+                "`huggingface-cli login`, or (b) re-run with "
+                "`--backend sam2` to use the legacy DINO + SAM 2 path "
+                "(no gating; needs the sam2 git install — see "
+                "`sentryblur prompt --help`).\n\n"
+                f"Underlying error: {e}",
+                fg="red", err=True,
+            )
+            raise SystemExit(1)
         _handle_error(e)
 
 

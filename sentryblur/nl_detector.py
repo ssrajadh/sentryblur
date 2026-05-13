@@ -170,3 +170,28 @@ class NLDetector:
                 "target is visible at some point in the video."
             )
         return masks
+
+
+def make_nl_detector(
+    text_prompt: str,
+    backend: str = "sam3",
+    device: str = "auto",
+):
+    """Construct the prompt-path detector for the requested backend.
+
+    backend="sam3" (default): SAM 3.1 via HuggingFace transformers. Gated
+    weights at facebook/sam3 — requires accepting Meta's SAM License and
+    `huggingface-cli login` before first use.
+
+    backend="sam2": legacy Grounding DINO + SAM 2 path. No gating, but
+    requires the sam2 git install (`--with git+https://github.com/...sam2.git`)
+    and has a frame-0 dependency that SAM 3 doesn't.
+    """
+    if backend == "sam3":
+        return NLDetector(text_prompt, device=device)
+    if backend == "sam2":
+        from sentryblur.nl_detector_sam2 import NLDetectorSam2
+        return NLDetectorSam2(text_prompt, device=device)
+    raise ValueError(
+        f"unknown backend {backend!r}; expected 'sam3' or 'sam2'",
+    )

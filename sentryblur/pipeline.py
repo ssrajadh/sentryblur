@@ -322,6 +322,7 @@ def blur_video_nl(
     output_path: Path,
     text_prompt: str,
     *,
+    backend: str = "sam3",
     dilation_px: int = 15,
     temporal_window: int = 3,
     blur_mode: str = "pixelate",
@@ -367,8 +368,8 @@ def blur_video_nl(
                 file=sys.stderr,
             )
 
-        from sentryblur.nl_detector import NLDetector
-        detector = NLDetector(text_prompt)
+        from sentryblur.nl_detector import make_nl_detector
+        detector = make_nl_detector(text_prompt, backend=backend)
         masks = detector.process_video(frames_in)
         if len(masks) != n:
             raise ValueError(
@@ -412,6 +413,7 @@ def generate_preview_nl(
     output_path: Path,
     text_prompt: str,
     *,
+    backend: str = "sam3",
     max_width: int = 1920,
 ) -> Path:
     """3x3 contact sheet of SAM 3 detections per keyframe — runs the model
@@ -423,8 +425,8 @@ def generate_preview_nl(
     if not input_path.exists():
         raise FileNotFoundError(input_path)
 
-    from sentryblur.nl_detector import NLDetector
-    detector = NLDetector(text_prompt)
+    from sentryblur.nl_detector import make_nl_detector
+    detector = make_nl_detector(text_prompt, backend=backend)
 
     cap = cv2.VideoCapture(str(input_path))
     try:
