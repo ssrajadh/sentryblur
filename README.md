@@ -2,11 +2,15 @@
 
 Local, offline object redaction for video, with one command.
 
+**The Pipeline:**
+1. [SentrySearch](https://github.com/ssrajadh/sentrysearch) (find an event in your footage)
+2. [SentryMerge](https://github.com/ssrajadh/sentrymerge) (auto-cut the multi-cam footage into one video that follows the subject across cameras)
+3. SentryBlur (auto-redact sensitive information)
+
 [https://github.com/user-attachments/assets/87710fbb-8d63-44ea-b011-5fc9b46512c0](https://github.com/user-attachments/assets/6af8f234-63e2-42e5-b896-e8f24c8f3ee8)
 
 > **Note**
 > The demo above is sped up. Actual runtime depends on hardware, the clip was processed on an M1 Pro MBP (16 GB RAM); expect faster results on better hardware. See the [Performance](#performance) table for details.  
-
 
 ## Getting Started
 
